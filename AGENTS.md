@@ -81,19 +81,22 @@ Config file locations:
 - Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 - Cursor: `.cursor/mcp.json`
 
-14 MCP tools with full CLI parity:
+17 MCP tools with full CLI parity:
 
 | Tool | What it does | Annotations |
 |------|-------------|-------------|
 | `capy_captain` | Start Captain thread | openWorld |
 | `capy_build` | Start Build agent | openWorld |
+| `capy_start` | Start/resume a backlog task | openWorld |
 | `capy_wait` | Block until done | readOnly, idempotent |
 | `capy_review` | Run quality gates | readOnly |
 | `capy_approve` | Approve task | openWorld |
 | `capy_retry` | Retry with context | openWorld |
+| `capy_re_review` | Trigger Greptile re-review | openWorld |
 | `capy_status` | Task/thread details or dashboard | readOnly, idempotent |
-| `capy_list` | List tasks (filterable) | readOnly, idempotent |
-| `capy_threads` | List threads | readOnly, idempotent |
+| `capy_list` | List tasks (filterable, paginated) | readOnly, idempotent |
+| `capy_threads` | List threads (paginated) | readOnly, idempotent |
+| `capy_thread_messages` | Read thread conversation history | readOnly, idempotent |
 | `capy_diff` | View diff | readOnly |
 | `capy_msg` | Message task/thread | openWorld |
 | `capy_stop` | Stop task/thread | destructive |
@@ -203,21 +206,30 @@ Every command supports `--json` for structured output. Errors always return `{ "
 |---------|-------------|
 | `capy captain "<prompt>"` | Start Captain thread |
 | `capy build "<prompt>"` | Start Build agent (small isolated tasks) |
+| `capy start <id>` | Start/resume a backlog task |
+| `capy stop <id> [reason]` | Stop a running task |
+| `capy msg <id> "<text>"` | Message a running task |
 | `capy wait <id> --timeout=N` | Block until terminal state |
 | `capy review <id>` | Run quality gates (pass/fail) |
+| `capy re-review <id>` | Trigger fresh Greptile review |
 | `capy approve <id>` | Approve if gates pass |
-| `capy retry <id> --fix="..."` | Retry with context |
-| `capy status` | Dashboard |
-| `capy list [status]` | List tasks |
-| `capy get <id>` | Task or thread details |
-| `capy diff <id>` | View diff |
-| `capy pr <id>` | Create PR |
-| `capy watch <id>` | Cron poll + notify |
-| `capy threads list` | List threads |
-| `capy threads get <id>` | Thread details |
+| `capy retry <id> --fix="..."` | Retry with context from failure |
+| `capy status` | Dashboard (all threads + tasks) |
+| `capy list [status]` | List tasks (filter: in_progress, needs_review, backlog, archived) |
+| `capy get <id>` | Task details (jams, PR state, credits) |
+| `capy diff <id>` | View diff (file-by-file with patches) |
+| `capy pr <id> [title]` | Create PR for a task |
+| `capy watch <id>` | Cron poll + notify on completion |
+| `capy unwatch <id>` | Stop watching |
+| `capy watches` | List active watches |
+| `capy threads list` | List Captain threads |
+| `capy threads get <id>` | Thread details (tasks, PRs) |
 | `capy threads msg <id> "<text>"` | Message a thread |
+| `capy threads stop <id>` | Stop a thread |
+| `capy threads messages <id>` | Read thread conversation history |
 | `capy config [key] [value]` | Get/set config |
 | `capy models` | List available models |
+| `capy tools` | Show all commands + env vars |
 
 ### Prompting tips
 

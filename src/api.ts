@@ -72,6 +72,11 @@ export async function listModelsWithKey(apiKey: string, server = "https://capy.a
   return data.models || [];
 }
 
+export async function getProject(id?: string): Promise<Project & { createdAt?: string; updatedAt?: string }> {
+  const pid = id || config.load().projectId;
+  return request("GET", `/projects/${pid}`);
+}
+
 // --- Threads ---
 export async function createThread(prompt: string, model?: string, repos?: unknown[]): Promise<Thread> {
   const cfg = config.load();
@@ -83,10 +88,11 @@ export async function createThread(prompt: string, model?: string, repos?: unkno
   });
 }
 
-export async function listThreads(opts: { limit?: number; status?: string } = {}): Promise<ListResponse<Thread>> {
+export async function listThreads(opts: { limit?: number; status?: string; cursor?: string } = {}): Promise<ListResponse<Thread>> {
   const cfg = config.load();
   const p = new URLSearchParams({ projectId: cfg.projectId, limit: String(opts.limit || 10) });
   if (opts.status) p.set("status", opts.status);
+  if (opts.cursor) p.set("cursor", opts.cursor);
   return request("GET", `/threads?${p}`);
 }
 
@@ -121,10 +127,11 @@ export async function createTask(prompt: string, model?: string, opts: { title?:
   });
 }
 
-export async function listTasks(opts: { limit?: number; status?: string } = {}): Promise<ListResponse<Task>> {
+export async function listTasks(opts: { limit?: number; status?: string; cursor?: string } = {}): Promise<ListResponse<Task>> {
   const cfg = config.load();
   const p = new URLSearchParams({ projectId: cfg.projectId, limit: String(opts.limit || 30) });
   if (opts.status) p.set("status", opts.status);
+  if (opts.cursor) p.set("cursor", opts.cursor);
   return request("GET", `/tasks?${p}`);
 }
 

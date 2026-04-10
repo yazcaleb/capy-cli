@@ -31,9 +31,16 @@ export interface Credits {
 }
 
 export interface Jam {
+  id?: string;
   model?: string;
   status?: string;
   credits?: Credits | number;
+  pullRequest?: PullRequestRef;
+  branches?: Record<string, unknown>;
+  git?: unknown;
+  slackThreads?: unknown[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface PullRequestRef {
@@ -48,21 +55,29 @@ export interface PullRequestRef {
 
 export interface Task {
   id: string;
+  projectId?: string;
   identifier: string;
   title: string;
   status: string;
   prompt?: string;
-  createdAt?: string;
+  labels?: string[];
   pullRequest?: PullRequestRef;
+  slackThreads?: unknown[];
+  createdAt?: string;
+  updatedAt?: string;
   jams?: Jam[];
 }
 
 export interface Thread {
   id: string;
+  projectId?: string;
   title?: string;
   status: string;
   tasks?: Task[];
   pullRequests?: PullRequestRef[];
+  slackThreads?: unknown[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ThreadMessage {
@@ -178,5 +193,7 @@ export interface ApiResponse {
 
 export interface ListResponse<T> {
   items?: T[];
+  nextCursor?: string;
+  hasMore?: boolean;
   [key: string]: unknown;
 }

@@ -234,12 +234,13 @@ server.registerTool("capy_list", {
   inputSchema: {
     status: z.string().optional().describe("Filter by status"),
     limit: z.number().optional().describe("Max results (default 30)"),
+    cursor: z.string().optional().describe("Pagination cursor from previous response"),
   },
   annotations: { readOnlyHint: true, idempotentHint: true },
-}, async ({ status, limit }) => {
+}, async ({ status, limit, cursor }) => {
   try {
-    const data = await api.listTasks({ status, limit: limit || 30 });
-    return text(data.items || []);
+    const data = await api.listTasks({ status, limit: limit || 30, cursor });
+    return text({ items: data.items || [], nextCursor: data.nextCursor, hasMore: data.hasMore });
   } catch (e) { return err(e); }
 });
 
@@ -247,12 +248,13 @@ server.registerTool("capy_threads", {
   description: "List Captain threads",
   inputSchema: {
     limit: z.number().optional().describe("Max results (default 10)"),
+    cursor: z.string().optional().describe("Pagination cursor from previous response"),
   },
   annotations: { readOnlyHint: true, idempotentHint: true },
-}, async ({ limit }) => {
+}, async ({ limit, cursor }) => {
   try {
-    const data = await api.listThreads({ limit: limit || 10 });
-    return text(data.items || []);
+    const data = await api.listThreads({ limit: limit || 10, cursor });
+    return text({ items: data.items || [], nextCursor: data.nextCursor, hasMore: data.hasMore });
   } catch (e) { return err(e); }
 });
 
@@ -312,6 +314,61 @@ server.registerTool("capy_pr", {
   try {
     const data = await api.createPR(id, title ? { title } : {});
     return text(data);
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_start", {
+  description: "Start a backlog task (resume a task that was created but not yet running)",
+  inputSchema: {
+    id: z.string().describe("Task ID"),
+    model: z.string().optional().describe("Model ID override"),
+  },
+  annotations: { openWorldHint: true },
+}, async ({ id, model }) => {
+  try {
+    const data = await api.startTask(id, model);
+    return text(data);
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_thread_messages", {
+  description: "Read the conversation history of a Captain thread",
+  inputSchema: {
+    id: z.string().describe("Thread ID"),
+    limit: z.number().optional().describe("Max messages (default 50)"),
+  },
+  annotations: { readOnlyHint: true, idempotentHint: true },
+}, async ({ id, limit }) => {
+  try {
+    const data = await api.getThreadMessages(id, { limit: limit || 50 });
+    return text(data.items || []);
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_re_review", {
+  description: "Trigger a fresh Greptile code review on a task's PR",
+  inputSchema: {
+    id: z.string().describe("Task ID"),
+  },
+  annotations: { openWorldHint: true },
+}, async ({ id }) => {
+  try {
+    const greptileApi = await import("./greptile.js");
+    const task = await api.getTask(id);
+    const cfg = config.load();
+
+    if (!task.pullRequest?.number) {
+      return { content: [{ type: "text" as const, text: JSON.stringify({ error: { code: "no_pr", message: `Task ${task.identifier} has no PR` } }) }], isError: true as const };
+    }
+
+    const repo = task.pullRequest.repoFullName || cfg.repos[0]?.repoFullName || "";
+    const prNum = task.pullRequest.number;
+    const defaultBranch = cfg.repos.find((r: { repoFullName: string; branch: string }) => r.repoFullName === repo)?.branch || "main";
+
+    const result = await greptileApi.freshReview(repo, prNum, defaultBranch);
+    const unaddressed = await greptileApi.getUnaddressedIssues(repo, prNum, defaultBranch);
+
+    return text({ task: task.identifier, pr: prNum, reviewStatus: result?.status || "triggered", unaddressed });
   } catch (e) { return err(e); }
 });
 

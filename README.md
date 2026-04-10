@@ -87,7 +87,7 @@ For agents that prefer MCP over CLI:
 }
 ```
 
-14 tools with full CLI parity: `capy_captain`, `capy_build`, `capy_wait`, `capy_review`, `capy_approve`, `capy_retry`, `capy_status`, `capy_list`, `capy_threads`, `capy_diff`, `capy_msg`, `capy_stop`, `capy_pr`, `capy_models`.
+17 tools with full CLI parity: `capy_captain`, `capy_build`, `capy_start`, `capy_wait`, `capy_review`, `capy_approve`, `capy_retry`, `capy_re_review`, `capy_status`, `capy_list`, `capy_threads`, `capy_thread_messages`, `capy_diff`, `capy_msg`, `capy_stop`, `capy_pr`, `capy_models`.
 
 ## Config
 
