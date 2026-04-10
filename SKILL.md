@@ -134,7 +134,7 @@ For agents that prefer MCP (Cursor, some Codex configs):
 }
 ```
 
-17 tools with full CLI parity, tool annotations, and structured output per 2025-03-26 MCP spec.
+21 tools with full API parity, tool annotations, and structured output per 2025-03-26 MCP spec.
 
 ### Prompting well
 

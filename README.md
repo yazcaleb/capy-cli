@@ -53,7 +53,8 @@ Every command supports `--json` for machine-readable output.
 | `capy diff <id>` | View diff |
 | `capy pr <id>` | Create PR for task |
 | `capy watch <id>` | Cron poll + notify on completion |
-| `capy threads [list\|get\|msg\|stop]` | Manage Captain threads |
+| `capy threads [list\|get\|msg\|stop\|messages]` | Manage Captain threads |
+| `capy pool [status\|set\|test\|instances\|clear]` | Manage warm pool VMs |
 | `capy models` | List available models |
 | `capy config [key] [value]` | Get/set config |
 
@@ -87,7 +88,7 @@ For agents that prefer MCP over CLI:
 }
 ```
 
-17 tools with full CLI parity: `capy_captain`, `capy_build`, `capy_start`, `capy_wait`, `capy_review`, `capy_approve`, `capy_retry`, `capy_re_review`, `capy_status`, `capy_list`, `capy_threads`, `capy_thread_messages`, `capy_diff`, `capy_msg`, `capy_stop`, `capy_pr`, `capy_models`.
+21 tools with full API parity, including warm pool management.
 
 ## Config
 

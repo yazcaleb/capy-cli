@@ -81,7 +81,7 @@ Config file locations:
 - Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 - Cursor: `.cursor/mcp.json`
 
-17 MCP tools with full CLI parity:
+21 MCP tools with full API parity:
 
 | Tool | What it does | Annotations |
 |------|-------------|-------------|
@@ -98,10 +98,14 @@ Config file locations:
 | `capy_threads` | List threads (paginated) | readOnly, idempotent |
 | `capy_thread_messages` | Read thread conversation history | readOnly, idempotent |
 | `capy_diff` | View diff | readOnly |
-| `capy_msg` | Message task/thread | openWorld |
+| `capy_msg` | Message task/thread (supports attachments, model switch) | openWorld |
 | `capy_stop` | Stop task/thread | destructive |
-| `capy_pr` | Create PR | openWorld |
+| `capy_pr` | Create PR (title, description, draft) | openWorld |
 | `capy_models` | List models | readOnly, idempotent |
+| `capy_pool_status` | Warm pool config + VM status | readOnly, idempotent |
+| `capy_pool_update` | Update warm pool config | openWorld |
+| `capy_pool_instances` | List warm pool VMs | readOnly, idempotent |
+| `capy_pool_clear` | Clear/refresh warm pool | destructive |
 
 Tools with predictable outputs (`capy_captain`, `capy_build`, `capy_review`, `capy_approve`, `capy_retry`) declare `outputSchema` for typed structured content per the 2025-03-26 MCP spec.
 
@@ -227,6 +231,12 @@ Every command supports `--json` for structured output. Errors always return `{ "
 | `capy threads msg <id> "<text>"` | Message a thread |
 | `capy threads stop <id>` | Stop a thread |
 | `capy threads messages <id>` | Read thread conversation history |
+| `capy pool` | Warm pool status |
+| `capy pool set --size=N --age=M` | Update warm pool config |
+| `capy pool test` | Test VM boot |
+| `capy pool instances [status]` | List pool VMs |
+| `capy pool instance <id>` | VM detail + logs |
+| `capy pool clear [--replenish]` | Clear/refresh pool |
 | `capy config [key] [value]` | Get/set config |
 | `capy models` | List available models |
 | `capy tools` | Show all commands + env vars |

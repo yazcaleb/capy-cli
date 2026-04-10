@@ -79,21 +79,24 @@ export async function getProject(id?: string): Promise<Project & { createdAt?: s
 }
 
 // --- Threads ---
-export async function createThread(prompt: string, model?: string, repos?: unknown[]): Promise<Thread> {
+export async function createThread(prompt: string, model?: string, opts: { repos?: unknown[]; attachmentUrls?: string[] } = {}): Promise<Thread> {
   const cfg = config.load();
   return request("POST", "/threads", {
     projectId: cfg.projectId,
     prompt,
     model: model || cfg.defaultModel,
-    repos: repos || cfg.repos,
+    repos: opts.repos || cfg.repos,
+    ...(opts.attachmentUrls?.length ? { attachmentUrls: opts.attachmentUrls } : {}),
   });
 }
 
-export async function listThreads(opts: { limit?: number; status?: string; cursor?: string } = {}): Promise<ListResponse<Thread>> {
+export async function listThreads(opts: { limit?: number; status?: string; cursor?: string; prNumber?: number; branch?: string } = {}): Promise<ListResponse<Thread>> {
   const cfg = config.load();
   const p = new URLSearchParams({ projectId: cfg.projectId, limit: String(opts.limit || 10) });
   if (opts.status) p.set("status", opts.status);
   if (opts.cursor) p.set("cursor", opts.cursor);
+  if (opts.prNumber) p.set("prNumber", String(opts.prNumber));
+  if (opts.branch) p.set("branch", opts.branch);
   return request("GET", `/threads?${p}`);
 }
 
@@ -101,8 +104,12 @@ export async function getThread(id: string): Promise<Thread> {
   return request("GET", `/threads/${id}`);
 }
 
-export async function messageThread(id: string, msg: string): Promise<unknown> {
-  return request("POST", `/threads/${id}/message`, { message: msg });
+export async function messageThread(id: string, msg: string, opts: { model?: string; attachmentUrls?: string[] } = {}): Promise<unknown> {
+  return request("POST", `/threads/${id}/message`, {
+    message: msg,
+    ...(opts.model ? { model: opts.model } : {}),
+    ...(opts.attachmentUrls?.length ? { attachmentUrls: opts.attachmentUrls } : {}),
+  });
 }
 
 export async function stopThread(id: string): Promise<unknown> {
@@ -115,7 +122,7 @@ export async function getThreadMessages(id: string, opts: { limit?: number } = {
 }
 
 // --- Tasks ---
-export async function createTask(prompt: string, model?: string, opts: { title?: string; start?: boolean; labels?: string[] } = {}): Promise<Task> {
+export async function createTask(prompt: string, model?: string, opts: { title?: string; start?: boolean; labels?: string[]; attachmentUrls?: string[] } = {}): Promise<Task> {
   const cfg = config.load();
   return request("POST", "/tasks", {
     projectId: cfg.projectId,
@@ -125,14 +132,17 @@ export async function createTask(prompt: string, model?: string, opts: { title?:
     model: model || cfg.defaultModel,
     start: opts.start !== false,
     ...(opts.labels ? { labels: opts.labels } : {}),
+    ...(opts.attachmentUrls?.length ? { attachmentUrls: opts.attachmentUrls } : {}),
   });
 }
 
-export async function listTasks(opts: { limit?: number; status?: string; cursor?: string } = {}): Promise<ListResponse<Task>> {
+export async function listTasks(opts: { limit?: number; status?: string; cursor?: string; prNumber?: number; branch?: string } = {}): Promise<ListResponse<Task>> {
   const cfg = config.load();
   const p = new URLSearchParams({ projectId: cfg.projectId, limit: String(opts.limit || 30) });
   if (opts.status) p.set("status", opts.status);
   if (opts.cursor) p.set("cursor", opts.cursor);
+  if (opts.prNumber) p.set("prNumber", String(opts.prNumber));
+  if (opts.branch) p.set("branch", opts.branch);
   return request("GET", `/tasks?${p}`);
 }
 
@@ -148,8 +158,11 @@ export async function stopTask(id: string, reason?: string): Promise<Task> {
   return request("POST", `/tasks/${id}/stop`, reason ? { reason } : {});
 }
 
-export async function messageTask(id: string, msg: string): Promise<unknown> {
-  return request("POST", `/tasks/${id}/message`, { message: msg });
+export async function messageTask(id: string, msg: string, opts: { attachmentUrls?: string[] } = {}): Promise<unknown> {
+  return request("POST", `/tasks/${id}/message`, {
+    message: msg,
+    ...(opts.attachmentUrls?.length ? { attachmentUrls: opts.attachmentUrls } : {}),
+  });
 }
 
 export async function createPR(id: string, opts: Record<string, unknown> = {}): Promise<PullRequestRef & { url?: string; number?: number; title?: string; headRef?: string; baseRef?: string }> {
@@ -162,4 +175,56 @@ export async function getDiff(id: string, mode = "run"): Promise<DiffData> {
 
 export async function listModels(): Promise<{ models?: Model[] }> {
   return request("GET", "/models");
+}
+
+// --- Warm Pool ---
+export interface WarmPoolConfig {
+  enabled: boolean;
+  targetSize: number;
+  maxAgeMinutes: number;
+  branch?: string;
+  setupCommands?: string[];
+  instances?: WarmPoolInstance[];
+}
+
+export interface WarmPoolInstance {
+  id: string;
+  status: string;
+  createdAt?: string;
+  claimedAt?: string;
+  logs?: string;
+}
+
+export async function getWarmPool(projectId?: string): Promise<WarmPoolConfig> {
+  const pid = projectId || config.load().projectId;
+  return request("GET", `/projects/${pid}/warm-pool`);
+}
+
+export async function updateWarmPool(update: { enabled?: boolean; targetSize?: number; maxAgeMinutes?: number; branch?: string; setupCommands?: string[] }, projectId?: string): Promise<WarmPoolConfig> {
+  const pid = projectId || config.load().projectId;
+  return request("PATCH", `/projects/${pid}/warm-pool`, update);
+}
+
+export async function testWarmPool(projectId?: string): Promise<{ instanceId: string; status: string }> {
+  const pid = projectId || config.load().projectId;
+  return request("POST", `/projects/${pid}/warm-pool/test`);
+}
+
+export async function listWarmPoolInstances(opts: { status?: string } = {}, projectId?: string): Promise<WarmPoolInstance[]> {
+  const pid = projectId || config.load().projectId;
+  const p = new URLSearchParams();
+  if (opts.status) p.set("status", opts.status);
+  const qs = p.toString();
+  const data = await request("GET", `/projects/${pid}/warm-pool/instances${qs ? `?${qs}` : ""}`);
+  return Array.isArray(data) ? data : data.instances || data.items || [];
+}
+
+export async function getWarmPoolInstance(instanceId: string, projectId?: string): Promise<WarmPoolInstance> {
+  const pid = projectId || config.load().projectId;
+  return request("GET", `/projects/${pid}/warm-pool/instances/${instanceId}`);
+}
+
+export async function clearWarmPool(opts: { replenish?: boolean } = {}, projectId?: string): Promise<unknown> {
+  const pid = projectId || config.load().projectId;
+  return request("POST", `/projects/${pid}/warm-pool/clear`, opts.replenish != null ? { replenish: opts.replenish } : {});
 }

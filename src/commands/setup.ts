@@ -178,6 +178,7 @@ export const tools = defineCommand({
       watch:      { args: "<id>",                  desc: "Poll + notify on completion" },
       unwatch:    { args: "<id>",                  desc: "Stop watching" },
       watches:    { args: "",                      desc: "List watches" },
+      pool:       { args: "[status|set|test|...]", desc: "Manage warm pool VMs" },
       models:     { args: "",                      desc: "List models" },
       tools:      { args: "",                      desc: "This list" },
       config:     { args: "[key] [value]",         desc: "Get/set config" },

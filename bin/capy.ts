@@ -36,6 +36,7 @@ const main = defineCommand({
     watches:     () => import("../src/commands/monitoring.js").then(m => m.watches),
     wait:        () => import("../src/commands/monitoring.js").then(m => m.wait),
     _poll:       () => import("../src/commands/monitoring.js").then(m => m._poll),
+    pool:        () => import("../src/commands/pool.js").then(m => m.default),
     init:        () => import("../src/commands/setup.js").then(m => m.init),
     config:      () => import("../src/commands/setup.js").then(m => m.config),
   },

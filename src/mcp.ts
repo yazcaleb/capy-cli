@@ -278,12 +278,16 @@ server.registerTool("capy_msg", {
   inputSchema: {
     id: z.string().describe("Task or thread ID"),
     text: z.string().describe("Message text"),
+    model: z.string().optional().describe("Switch model mid-conversation (threads only)"),
+    attachmentUrls: z.array(z.string()).optional().describe("URLs to attach"),
   },
   annotations: { openWorldHint: true },
-}, async ({ id, text: msg }) => {
+}, async ({ id, text: msg, model, attachmentUrls }) => {
   try {
     const isThread = isThreadId(id);
-    const result = isThread ? await api.messageThread(id, msg) : await api.messageTask(id, msg);
+    const result = isThread
+      ? await api.messageThread(id, msg, { model, attachmentUrls })
+      : await api.messageTask(id, msg, { attachmentUrls });
     return text({ id, sent: true, type: isThread ? "thread" : "task", ...(result && typeof result === "object" ? result as Record<string, unknown> : {}) });
   } catch (e) { return err(e); }
 });
@@ -308,11 +312,17 @@ server.registerTool("capy_pr", {
   inputSchema: {
     id: z.string().describe("Task ID"),
     title: z.string().optional().describe("PR title override"),
+    description: z.string().optional().describe("PR body/description"),
+    draft: z.boolean().optional().describe("Create as draft PR"),
   },
   annotations: { openWorldHint: true },
-}, async ({ id, title }) => {
+}, async ({ id, title, description, draft }) => {
   try {
-    const data = await api.createPR(id, title ? { title } : {});
+    const opts: Record<string, unknown> = {};
+    if (title) opts.title = title;
+    if (description) opts.description = description;
+    if (draft != null) opts.draft = draft;
+    const data = await api.createPR(id, opts);
     return text(data);
   } catch (e) { return err(e); }
 });
@@ -380,6 +390,62 @@ server.registerTool("capy_models", {
   try {
     const data = await api.listModels();
     return text(data.models || []);
+  } catch (e) { return err(e); }
+});
+
+// --- Warm Pool ---
+
+server.registerTool("capy_pool_status", {
+  description: "Get warm pool config and VM status",
+  inputSchema: {},
+  annotations: { readOnlyHint: true, idempotentHint: true },
+}, async () => {
+  try {
+    const pool = await api.getWarmPool();
+    return text(pool);
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_pool_update", {
+  description: "Update warm pool configuration (VM pre-warming)",
+  inputSchema: {
+    enabled: z.boolean().optional().describe("Enable/disable warm pool"),
+    targetSize: z.number().optional().describe("Number of VMs to keep warm"),
+    maxAgeMinutes: z.number().optional().describe("Max VM age before recycling"),
+    branch: z.string().optional().describe("Branch for pool VMs"),
+    setupCommands: z.array(z.string()).optional().describe("Commands to run on VM boot"),
+  },
+  annotations: { openWorldHint: true },
+}, async (params) => {
+  try {
+    const data = await api.updateWarmPool(params);
+    return text(data);
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_pool_instances", {
+  description: "List warm pool VM instances",
+  inputSchema: {
+    status: z.string().optional().describe("Filter: ready, provisioning, failed, claimed"),
+  },
+  annotations: { readOnlyHint: true, idempotentHint: true },
+}, async ({ status }) => {
+  try {
+    const data = await api.listWarmPoolInstances({ status });
+    return text(data);
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_pool_clear", {
+  description: "Clear all warm pool VMs",
+  inputSchema: {
+    replenish: z.boolean().optional().describe("Replenish pool after clearing"),
+  },
+  annotations: { destructiveHint: true },
+}, async ({ replenish }) => {
+  try {
+    const data = await api.clearWarmPool({ replenish });
+    return text(data);
   } catch (e) { return err(e); }
 });
 
