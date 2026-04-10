@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 
-import { defineCommand, runMain } from "citty";
+import { defineCommand, runCommand } from "citty";
 import { createRequire } from "node:module";
+import { CapyError } from "../src/api.js";
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json");
@@ -40,4 +41,17 @@ const main = defineCommand({
   },
 });
 
-runMain(main);
+try {
+  await runCommand(main, { rawArgs: process.argv.slice(2) });
+} catch (e) {
+  if (e instanceof CapyError) {
+    if (process.argv.includes("--json")) {
+      console.log(JSON.stringify({ error: { code: e.code, message: e.message } }));
+    } else {
+      console.error(`capy: ${e.message}`);
+    }
+    process.exit(1);
+  }
+  console.error(e instanceof Error ? e.message : String(e));
+  process.exit(1);
+}

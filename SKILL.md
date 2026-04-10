@@ -134,7 +134,7 @@ For agents that prefer MCP (Cursor, some Codex configs):
 }
 ```
 
-Exposes tools: `capy_captain`, `capy_status`, `capy_review`, `capy_approve`, `capy_retry`, `capy_wait`.
+14 tools with full CLI parity, tool annotations, and structured output per 2025-03-26 MCP spec.
 
 ### Prompting well
 

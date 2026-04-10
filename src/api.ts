@@ -1,14 +1,17 @@
 import * as config from "./config.js";
-import { IS_JSON } from "./output.js";
 import type { Task, Thread, ThreadMessage, DiffData, Model, ListResponse, PullRequestRef } from "./types.js";
 
-function fail(code: string, message: string): never {
-  if (IS_JSON) {
-    console.log(JSON.stringify({ error: { code, message } }));
-  } else {
-    console.error(`capy: ${message}`);
+export class CapyError extends Error {
+  code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+    this.name = "CapyError";
   }
-  process.exit(1);
+}
+
+function fail(code: string, message: string): never {
+  throw new CapyError(code, message);
 }
 
 async function rawRequest(apiKey: string, server: string, method: string, path: string, body?: unknown): Promise<any> {

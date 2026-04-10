@@ -1,6 +1,6 @@
 {
   "name": "capyai",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "type": "module",
   "description": "Unofficial Capy.ai CLI for agent orchestration with quality gates",
   "bin": {
@@ -13,7 +13,8 @@
   "files": [
     "bin/",
     "src/",
-    "skills/"
+    "skills/",
+    "AGENTS.md"
   ],
   "engines": {
     "node": ">=18"
@@ -35,7 +36,7 @@
   ],
   "dependencies": {
     "@clack/prompts": "^1.2.0",
-    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "citty": "^0.2.2",
     "zod": "^3.24.0"
   }

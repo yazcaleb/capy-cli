@@ -3,133 +3,327 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { createRequire } from "node:module";
 import * as api from "./api.js";
+import { CapyError } from "./api.js";
 import * as config from "./config.js";
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json");
 
-const server = new McpServer({
-  name: "capy",
-  version,
-});
+const server = new McpServer({ name: "capy", version });
 
-server.tool("capy_captain", "Start a Captain thread to delegate coding work", {
-  prompt: z.string().describe("What the agent should do. Be specific: files, functions, acceptance criteria."),
-  model: z.string().optional().describe("Model ID override"),
+function err(e: unknown) {
+  const error = e instanceof CapyError
+    ? { code: e.code, message: e.message }
+    : { code: "internal", message: e instanceof Error ? e.message : String(e) };
+  return { content: [{ type: "text" as const, text: JSON.stringify({ error }) }], isError: true as const };
+}
+
+function text(data: unknown) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(data) }] };
+}
+
+function structured(data: Record<string, unknown>) {
+  return { structuredContent: data, content: [{ type: "text" as const, text: JSON.stringify(data) }] };
+}
+
+function isThreadId(id: string): boolean {
+  return id.length > 20 || (id.length > 10 && !id.match(/^[A-Z]+-\d+$/));
+}
+
+// --- Orchestration ---
+
+server.registerTool("capy_captain", {
+  description: "Start a Captain thread to delegate coding work to a Capy agent",
+  inputSchema: {
+    prompt: z.string().describe("What the agent should do. Be specific: files, functions, acceptance criteria."),
+    model: z.string().optional().describe("Model ID override (default: config defaultModel)"),
+  },
+  outputSchema: {
+    threadId: z.string(),
+    url: z.string(),
+  },
+  annotations: { openWorldHint: true },
 }, async ({ prompt, model }) => {
-  const cfg = config.load();
-  const data = await api.createThread(prompt, model);
-  return { content: [{ type: "text", text: JSON.stringify({ threadId: data.id, url: `https://capy.ai/project/${cfg.projectId}/captain/${data.id}` }) }] };
-});
-
-server.tool("capy_status", "Get task or thread status, or full dashboard", {
-  id: z.string().optional().describe("Task or thread ID. Omit for dashboard."),
-}, async ({ id }) => {
-  if (id) {
-    const isThread = id.length > 20 || (id.length > 10 && !id.match(/^[A-Z]+-\d+$/));
-    const data: any = isThread ? await api.getThread(id) : await api.getTask(id);
-    // Capy API reports merged PRs as "closed". Cross-ref with GitHub for real state.
-    if (!isThread && data.pullRequest?.number && data.pullRequest.state === "closed") {
-      const { getPR } = await import("./github.js");
-      const cfg = config.load();
-      const repo = data.pullRequest.repoFullName || cfg.repos[0]?.repoFullName;
-      if (repo) {
-        const ghPR = getPR(repo, data.pullRequest.number);
-        if (ghPR) data.pullRequest.state = ghPR.state.toLowerCase();
-      }
-    }
-    return { content: [{ type: "text", text: JSON.stringify(data) }] };
-  }
-  const [threads, tasks] = await Promise.all([api.listThreads({ limit: 10 }), api.listTasks({ limit: 30 })]);
-  return { content: [{ type: "text", text: JSON.stringify({ threads: threads.items || [], tasks: tasks.items || [] }) }] };
-});
-
-server.tool("capy_review", "Run quality gates on a task", {
-  id: z.string().describe("Task ID"),
-}, async ({ id }) => {
-  const qualityEngine = await import("./quality-engine.js");
-  const task = await api.getTask(id);
-  if (!task.pullRequest?.number) {
-    return { content: [{ type: "text", text: JSON.stringify({ error: "no_pr", task: task.identifier }) }] };
-  }
-  const q = await qualityEngine.check(task);
-  return { content: [{ type: "text", text: JSON.stringify({ task: task.identifier, quality: q }) }] };
-});
-
-server.tool("capy_approve", "Approve a task if quality gates pass. Runs the configured approveCommand hook on success.", {
-  id: z.string().describe("Task ID"),
-  force: z.boolean().optional().describe("Override failing gates"),
-}, async ({ id, force }) => {
-  const qualityEngine = await import("./quality-engine.js");
-  const task = await api.getTask(id);
-  const cfg = config.load();
-  const q = await qualityEngine.check(task);
-  const approved = q.pass || !!force;
-
-  if (approved && cfg.approveCommand) {
-    try {
-      const { execFileSync } = await import("node:child_process");
-      const parts = cfg.approveCommand
-        .replace("{task}", task.identifier || task.id)
-        .replace("{title}", task.title || "")
-        .replace("{pr}", String(task.pullRequest?.number || ""))
-        .split(/\s+/);
-      execFileSync(parts[0], parts.slice(1), { encoding: "utf8", timeout: 15000, stdio: "pipe" });
-    } catch {}
-  }
-
-  return { content: [{ type: "text", text: JSON.stringify({ task: task.identifier, quality: q, approved }) }] };
-});
-
-server.tool("capy_retry", "Retry a failed task with context from previous attempt", {
-  id: z.string().describe("Task ID to retry"),
-  fix: z.string().optional().describe("Specific fix instructions"),
-  model: z.string().optional().describe("Model ID override"),
-}, async ({ id, fix, model }) => {
-  const task = await api.getTask(id);
-  const cfg = config.load();
-
-  let context = `Previous attempt: ${task.identifier} "${task.title}" [${task.status}]\n`;
   try {
-    const d = await api.getDiff(id);
-    if (d.stats?.files && d.stats.files > 0) {
-      context += `\nPrevious diff: +${d.stats.additions} -${d.stats.deletions} in ${d.stats.files} files\n`;
-    }
-  } catch {}
-
-  let retryPrompt = `RETRY: This is a retry of a previous attempt that had issues.\n\nOriginal task: ${task.prompt || task.title}\n\n--- CONTEXT ---\n${context}\n`;
-  if (fix) retryPrompt += `--- FIX ---\n${fix}\n\n`;
-  retryPrompt += `Fix the issues. Include tests. Run tests before completing.\n`;
-
-  if (task.status === "in_progress") {
-    await api.stopTask(id, "Retrying with fixes");
-  }
-
-  const data = await api.createThread(retryPrompt, model || cfg.defaultModel);
-  return { content: [{ type: "text", text: JSON.stringify({ originalTask: task.identifier, newThread: data.id, model: model || cfg.defaultModel }) }] };
+    const cfg = config.load();
+    const data = await api.createThread(prompt, model);
+    return structured({ threadId: data.id, url: `https://capy.ai/project/${cfg.projectId}/captain/${data.id}` });
+  } catch (e) { return err(e); }
 });
 
-server.tool("capy_wait", "Poll until a task or thread reaches terminal state", {
-  id: z.string().describe("Task or thread ID"),
-  timeout: z.number().optional().describe("Timeout in seconds (default 300)"),
-  interval: z.number().optional().describe("Poll interval in seconds (default 10)"),
-}, async ({ id, timeout, interval }) => {
-  const timeoutMs = (timeout || 300) * 1000;
-  const intervalMs = Math.max(5, Math.min(interval || 10, 60)) * 1000;
-  const isThread = id.length > 20 || (id.length > 10 && !id.match(/^[A-Z]+-\d+$/));
-  const terminalTask = new Set(["needs_review", "archived", "completed", "failed"]);
-  const terminalThread = new Set(["idle", "archived", "completed"]);
-  const terminal = isThread ? terminalThread : terminalTask;
+server.registerTool("capy_build", {
+  description: "Start a Build agent for small isolated tasks (single-file fixes, scripts)",
+  inputSchema: {
+    prompt: z.string().describe("What to build. Be specific."),
+    model: z.string().optional().describe("Model ID override"),
+    title: z.string().optional().describe("Short task title"),
+  },
+  outputSchema: {
+    id: z.string(),
+    identifier: z.string(),
+    status: z.string(),
+  },
+  annotations: { openWorldHint: true },
+}, async ({ prompt, model, title }) => {
+  try {
+    const data = await api.createTask(prompt, model, { title, start: true });
+    return structured({ id: data.id, identifier: data.identifier, status: data.status });
+  } catch (e) { return err(e); }
+});
 
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const data = isThread ? await api.getThread(id) : await api.getTask(id);
-    if (terminal.has(data.status)) {
-      return { content: [{ type: "text", text: JSON.stringify(data) }] };
+server.registerTool("capy_wait", {
+  description: "Block until a task or thread reaches terminal state (needs_review, completed, failed, idle, archived)",
+  inputSchema: {
+    id: z.string().describe("Task or thread ID"),
+    timeout: z.number().optional().describe("Timeout in seconds (default 300)"),
+    interval: z.number().optional().describe("Poll interval in seconds (default 10)"),
+  },
+  annotations: { readOnlyHint: true, idempotentHint: true },
+}, async ({ id, timeout, interval }) => {
+  try {
+    const timeoutMs = (timeout || 300) * 1000;
+    const intervalMs = Math.max(5, Math.min(interval || 10, 60)) * 1000;
+    const isThread = isThreadId(id);
+    const terminal = isThread
+      ? new Set(["idle", "archived", "completed"])
+      : new Set(["needs_review", "archived", "completed", "failed"]);
+
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const data = isThread ? await api.getThread(id) : await api.getTask(id);
+      if (terminal.has(data.status)) return text(data);
+      await new Promise(r => setTimeout(r, intervalMs));
     }
-    await new Promise(r => setTimeout(r, intervalMs));
-  }
-  return { content: [{ type: "text", text: JSON.stringify({ error: { code: "timeout", message: `Timed out after ${timeout || 300}s` } }) }] };
+    return { content: [{ type: "text" as const, text: JSON.stringify({ error: { code: "timeout", message: `Timed out after ${timeout || 300}s` } }) }], isError: true as const };
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_review", {
+  description: "Run quality gates on a task (pr_exists, pr_open, ci, greptile, threads, tests)",
+  inputSchema: {
+    id: z.string().describe("Task ID"),
+  },
+  outputSchema: {
+    task: z.string(),
+    quality: z.object({
+      pass: z.boolean(),
+      passed: z.number(),
+      total: z.number(),
+      summary: z.string(),
+    }),
+  },
+  annotations: { readOnlyHint: true },
+}, async ({ id }) => {
+  try {
+    const qualityEngine = await import("./quality-engine.js");
+    const task = await api.getTask(id);
+    if (!task.pullRequest?.number) {
+      return { content: [{ type: "text" as const, text: JSON.stringify({ error: { code: "no_pr", message: `Task ${task.identifier} has no PR` } }) }], isError: true as const };
+    }
+    const q = await qualityEngine.check(task);
+    return structured({ task: task.identifier, quality: q as unknown as Record<string, unknown> });
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_approve", {
+  description: "Approve a task if quality gates pass. Runs approveCommand hook on success.",
+  inputSchema: {
+    id: z.string().describe("Task ID"),
+    force: z.boolean().optional().describe("Override failing gates"),
+  },
+  outputSchema: {
+    task: z.string(),
+    approved: z.boolean(),
+  },
+  annotations: { openWorldHint: true },
+}, async ({ id, force }) => {
+  try {
+    const qualityEngine = await import("./quality-engine.js");
+    const task = await api.getTask(id);
+    const cfg = config.load();
+    const q = await qualityEngine.check(task);
+    const approved = q.pass || !!force;
+
+    if (approved && cfg.approveCommand) {
+      try {
+        const { execFileSync } = await import("node:child_process");
+        const parts = cfg.approveCommand
+          .replace("{task}", task.identifier || task.id)
+          .replace("{title}", task.title || "")
+          .replace("{pr}", String(task.pullRequest?.number || ""))
+          .split(/\s+/);
+        execFileSync(parts[0], parts.slice(1), { encoding: "utf8", timeout: 15000, stdio: "pipe" });
+      } catch {}
+    }
+
+    return structured({ task: task.identifier, quality: q as unknown as Record<string, unknown>, approved });
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_retry", {
+  description: "Retry a failed task with context from previous attempt. Creates a new Captain thread.",
+  inputSchema: {
+    id: z.string().describe("Task ID to retry"),
+    fix: z.string().optional().describe("Specific fix instructions"),
+    model: z.string().optional().describe("Model ID override"),
+  },
+  outputSchema: {
+    originalTask: z.string(),
+    newThread: z.string(),
+    model: z.string(),
+  },
+  annotations: { openWorldHint: true },
+}, async ({ id, fix, model }) => {
+  try {
+    const task = await api.getTask(id);
+    const cfg = config.load();
+
+    let context = `Previous attempt: ${task.identifier} "${task.title}" [${task.status}]\n`;
+    try {
+      const d = await api.getDiff(id);
+      if (d.stats?.files && d.stats.files > 0) {
+        context += `\nPrevious diff: +${d.stats.additions} -${d.stats.deletions} in ${d.stats.files} files\n`;
+      }
+    } catch {}
+
+    let retryPrompt = `RETRY: This is a retry of a previous attempt that had issues.\n\nOriginal task: ${task.prompt || task.title}\n\n--- CONTEXT ---\n${context}\n`;
+    if (fix) retryPrompt += `--- FIX ---\n${fix}\n\n`;
+    retryPrompt += `Fix the issues. Include tests. Run tests before completing.\n`;
+
+    if (task.status === "in_progress") {
+      await api.stopTask(id, "Retrying with fixes");
+    }
+
+    const m = model || cfg.defaultModel;
+    const data = await api.createThread(retryPrompt, m);
+    return structured({ originalTask: task.identifier, newThread: data.id, model: m });
+  } catch (e) { return err(e); }
+});
+
+// --- Status & monitoring ---
+
+server.registerTool("capy_status", {
+  description: "Get task or thread details by ID, or full dashboard (omit ID for dashboard)",
+  inputSchema: {
+    id: z.string().optional().describe("Task or thread ID. Omit for dashboard."),
+  },
+  annotations: { readOnlyHint: true, idempotentHint: true },
+}, async ({ id }) => {
+  try {
+    if (id) {
+      const isThread = isThreadId(id);
+      const data: any = isThread ? await api.getThread(id) : await api.getTask(id);
+      if (!isThread && data.pullRequest?.number && data.pullRequest.state === "closed") {
+        const { getPR } = await import("./github.js");
+        const cfg = config.load();
+        const repo = data.pullRequest.repoFullName || cfg.repos[0]?.repoFullName;
+        if (repo) {
+          const ghPR = getPR(repo, data.pullRequest.number);
+          if (ghPR) data.pullRequest.state = ghPR.state.toLowerCase();
+        }
+      }
+      return text(data);
+    }
+    const [threads, tasks] = await Promise.all([api.listThreads({ limit: 10 }), api.listTasks({ limit: 30 })]);
+    return text({ threads: threads.items || [], tasks: tasks.items || [] });
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_list", {
+  description: "List tasks, optionally filtered by status (in_progress, needs_review, backlog, archived)",
+  inputSchema: {
+    status: z.string().optional().describe("Filter by status"),
+    limit: z.number().optional().describe("Max results (default 30)"),
+  },
+  annotations: { readOnlyHint: true, idempotentHint: true },
+}, async ({ status, limit }) => {
+  try {
+    const data = await api.listTasks({ status, limit: limit || 30 });
+    return text(data.items || []);
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_threads", {
+  description: "List Captain threads",
+  inputSchema: {
+    limit: z.number().optional().describe("Max results (default 10)"),
+  },
+  annotations: { readOnlyHint: true, idempotentHint: true },
+}, async ({ limit }) => {
+  try {
+    const data = await api.listThreads({ limit: limit || 10 });
+    return text(data.items || []);
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_diff", {
+  description: "View the diff (code changes) from a task",
+  inputSchema: {
+    id: z.string().describe("Task ID"),
+  },
+  annotations: { readOnlyHint: true },
+}, async ({ id }) => {
+  try {
+    const data = await api.getDiff(id);
+    return text(data);
+  } catch (e) { return err(e); }
+});
+
+// --- Actions ---
+
+server.registerTool("capy_msg", {
+  description: "Send a message to a running task or thread",
+  inputSchema: {
+    id: z.string().describe("Task or thread ID"),
+    text: z.string().describe("Message text"),
+  },
+  annotations: { openWorldHint: true },
+}, async ({ id, text: msg }) => {
+  try {
+    const isThread = isThreadId(id);
+    const result = isThread ? await api.messageThread(id, msg) : await api.messageTask(id, msg);
+    return text({ id, sent: true, type: isThread ? "thread" : "task", ...(result && typeof result === "object" ? result as Record<string, unknown> : {}) });
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_stop", {
+  description: "Stop a running task or thread",
+  inputSchema: {
+    id: z.string().describe("Task or thread ID"),
+    reason: z.string().optional().describe("Reason for stopping"),
+  },
+  annotations: { destructiveHint: true },
+}, async ({ id, reason }) => {
+  try {
+    const isThread = isThreadId(id);
+    const result = isThread ? await api.stopThread(id) : await api.stopTask(id, reason);
+    return text(result);
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_pr", {
+  description: "Create a pull request for a completed task",
+  inputSchema: {
+    id: z.string().describe("Task ID"),
+    title: z.string().optional().describe("PR title override"),
+  },
+  annotations: { openWorldHint: true },
+}, async ({ id, title }) => {
+  try {
+    const data = await api.createPR(id, title ? { title } : {});
+    return text(data);
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_models", {
+  description: "List available AI models",
+  inputSchema: {},
+  annotations: { readOnlyHint: true, idempotentHint: true },
+}, async () => {
+  try {
+    const data = await api.listModels();
+    return text(data.models || []);
+  } catch (e) { return err(e); }
 });
 
 const transport = new StdioServerTransport();

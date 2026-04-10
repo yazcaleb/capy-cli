@@ -18,7 +18,7 @@ export function add(id: string, type: string, intervalMin: number): boolean {
 
   const thisDir = path.dirname(new URL(import.meta.url).pathname);
   const binPath = path.resolve(thisDir, "..", "bin", "capy.ts");
-  const runtime = typeof Bun !== "undefined" ? "bun" : "node";
+  const runtime = process.execPath;
   const tag = `# capy-watch:${id}`;
   const cronLine = `*/${intervalMin} * * * * ${runtime} ${binPath} _poll ${id} ${type} ${tag}`;
 
