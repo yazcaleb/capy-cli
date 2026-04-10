@@ -85,6 +85,7 @@ export function set(key: string, value: string): void {
     if (value === "true") parsed = true;
     else if (value === "false") parsed = false;
     else if (/^\d+$/.test(value)) parsed = parseInt(value);
+    else if (/^\d+\.\d+$/.test(value)) parsed = parseFloat(value);
     obj[parts[parts.length - 1]] = parsed;
   } else {
     cfg[key] = value;

@@ -56,6 +56,45 @@ export const watches = defineCommand({
   },
 });
 
+export const wait = defineCommand({
+  meta: { name: "wait", description: "Block until task/thread reaches terminal state" },
+  args: {
+    id: { type: "positional", description: "Task or thread ID", required: true },
+    timeout: { type: "string", description: "Timeout in seconds", default: "300" },
+    interval: { type: "string", description: "Poll interval in seconds", default: "10" },
+    ...jsonArg,
+  },
+  async run({ args }) {
+    const api = await import("../api.js");
+    const fmt = await import("../output.js");
+
+    const timeoutMs = Math.max(10, parseInt(args.timeout) || 300) * 1000;
+    const intervalMs = Math.max(5, Math.min(parseInt(args.interval) || 10, 60)) * 1000;
+    const isThread = args.id.length > 20 || (args.id.length > 10 && !args.id.match(/^[A-Z]+-\d+$/));
+    const terminalTask = new Set(["needs_review", "archived", "completed", "failed"]);
+    const terminalThread = new Set(["idle", "archived", "completed"]);
+    const terminal = isThread ? terminalThread : terminalTask;
+
+    const start = Date.now();
+    if (!args.json) process.stderr.write(`Waiting for ${args.id} (${isThread ? "thread" : "task"})...`);
+
+    while (Date.now() - start < timeoutMs) {
+      const data = isThread ? await api.getThread(args.id) : await api.getTask(args.id);
+      if (terminal.has(data.status)) {
+        if (args.json) { fmt.out(data); return; }
+        console.log(`\n${isThread ? "Thread" : "Task"} ${data.status}.`);
+        return;
+      }
+      if (!args.json) process.stderr.write(".");
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+
+    if (args.json) { fmt.out({ error: { code: "timeout", message: `Timed out after ${args.timeout}s` } }); process.exit(1); }
+    console.error(`\ncapy: timed out after ${args.timeout}s`);
+    process.exit(1);
+  },
+});
+
 export const _poll = defineCommand({
   meta: { name: "_poll", description: "Internal cron poll", hidden: true },
   args: {

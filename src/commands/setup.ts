@@ -117,6 +117,7 @@ export const config = defineCommand({
     if (!args.value) {
       const val = configMod.get(args.key);
       if (val === undefined) {
+        if (args.json) { fmt.out({ error: { code: "unknown_key", message: `unknown config key "${args.key}"` } }); process.exit(1); }
         console.error(`capy: unknown config key "${args.key}"`);
         process.exit(1);
       }
@@ -173,6 +174,7 @@ export const tools = defineCommand({
       "re-review":{ args: "<id>",                  desc: "Trigger Greptile re-review" },
       approve:    { args: "<id>",                  desc: "Approve if gates pass" },
       retry:      { args: "<id> [--fix=...]",      desc: "Retry with failure context" },
+      wait:       { args: "<id>",                  desc: "Block until done" },
       watch:      { args: "<id>",                  desc: "Poll + notify on completion" },
       unwatch:    { args: "<id>",                  desc: "Stop watching" },
       watches:    { args: "",                      desc: "List watches" },
@@ -219,7 +221,7 @@ export const status = defineCommand({
 
     const cfg = config.load();
 
-    let threads: any, tasks: any;
+    let threads: Awaited<ReturnType<typeof api.listThreads>>, tasks: Awaited<ReturnType<typeof api.listTasks>>;
     if (!args.json) {
       const s = spinner();
       s.start("Loading dashboard...");

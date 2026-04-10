@@ -21,7 +21,7 @@ export const review = defineCommand({
     const reviewProvider = cfg.quality?.reviewProvider || "greptile";
 
     if (!task.pullRequest?.number) {
-      if (args.json) { fmt.out({ error: "no_pr", task: task.identifier }); return; }
+      if (args.json) { fmt.out({ error: { code: "no_pr", message: `${task.identifier}: No PR` }, task: task.identifier }); return; }
       log.warn(`${task.identifier}: No PR. Create one first: capy pr ${task.identifier}`);
       return;
     }
@@ -115,17 +115,20 @@ export const reReview = defineCommand({
     const reviewProvider = cfg.quality?.reviewProvider || "greptile";
 
     if (reviewProvider !== "greptile" && reviewProvider !== "both") {
+      if (args.json) { fmt.out({ error: { code: "wrong_provider", message: `re-review requires Greptile provider (current: ${reviewProvider})` } }); process.exit(1); }
       console.error(`capy: re-review requires Greptile provider (current: ${reviewProvider})`);
       process.exit(1);
     }
 
     if (!cfg.greptileApiKey && !process.env.GREPTILE_API_KEY) {
+      if (args.json) { fmt.out({ error: { code: "no_greptile_key", message: "GREPTILE_API_KEY not set" } }); process.exit(1); }
       console.error("capy: GREPTILE_API_KEY not set. Run: capy config greptileApiKey <key>");
       process.exit(1);
     }
 
     const task = await api.getTask(args.id);
     if (!task.pullRequest?.number) {
+      if (args.json) { fmt.out({ error: { code: "no_pr", message: `${task.identifier}: No PR` } }); process.exit(1); }
       console.error(`${task.identifier}: No PR. Create one first: capy pr ${task.identifier}`);
       process.exit(1);
     }
@@ -176,7 +179,16 @@ export const approve = defineCommand({
     const cfg = config.load();
     const q = await quality.check(task);
 
-    if (args.json) { fmt.out({ task: task.identifier, quality: q, approved: q.pass || args.force }); return; }
+    const approved = q.pass || !!args.force;
+
+    if (args.json) {
+      if (!approved) {
+        fmt.out({ task: task.identifier, quality: q, approved: false, error: { code: "gates_failed", message: q.summary } });
+        process.exit(1);
+      }
+      fmt.out({ task: task.identifier, quality: q, approved: true });
+      return;
+    }
 
     log.info(`${task.identifier} \u2014 ${task.title}\n`);
     q.gates.forEach(g => {
@@ -187,7 +199,7 @@ export const approve = defineCommand({
     if (q.pass) log.success(q.summary);
     else log.warn(q.summary);
 
-    if (!q.pass && !args.force) {
+    if (!approved) {
       log.error("Blocked. Fix the failing gates or use --force to override.");
       process.exit(1);
     }
@@ -197,12 +209,13 @@ export const approve = defineCommand({
       const approveCmd = cfg.approveCommand;
       if (approveCmd) {
         try {
-          const { execSync } = await import("node:child_process");
-          const expanded = approveCmd
+          const { execFileSync } = await import("node:child_process");
+          const parts = approveCmd
             .replace("{task}", task.identifier || task.id)
             .replace("{title}", task.title || "")
-            .replace("{pr}", String(task.pullRequest?.number || ""));
-          execSync(expanded, { encoding: "utf8", timeout: 15000, stdio: "pipe" });
+            .replace("{pr}", String(task.pullRequest?.number || ""))
+            .split(/\s+/);
+          execFileSync(parts[0], parts.slice(1), { encoding: "utf8", timeout: 15000, stdio: "pipe" });
           log.info("Post-approve hook ran.");
         } catch {}
       }
@@ -294,18 +307,19 @@ export const retry = defineCommand({
     retryPrompt += `Fix the issues from the previous attempt. Do not repeat the same mistakes.\n`;
     retryPrompt += `Include tests. Run tests before completing. Verify CI will pass.\n`;
 
-    if (args.json) {
-      fmt.out({ originalTask: task.identifier, retryPrompt, context });
-      return;
-    }
-
     if (task.status === "in_progress") {
       await api.stopTask(args.id, "Retrying with fixes");
-      log.info(`Stopped ${task.identifier}.`);
+      if (!args.json) log.info(`Stopped ${task.identifier}.`);
     }
 
     const model = resolveModel(args) || cfg.defaultModel;
     const data = await api.createThread(retryPrompt, model);
+
+    if (args.json) {
+      fmt.out({ originalTask: task.identifier, newThread: data.id, model, contextLines: context.split("\n").length });
+      return;
+    }
+
     log.success(`Retry started: https://capy.ai/project/${cfg.projectId}/captain/${data.id}`);
     log.info(`Thread: ${data.id}  Model: ${model}`);
     log.info(`Context included: ${context.split("\n").length} lines from previous attempt.`);

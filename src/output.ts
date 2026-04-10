@@ -19,7 +19,8 @@ export function out(data: unknown): void {
 
 export function table(headers: string[], rows: (string | number | null | undefined)[][]): void {
   if (IS_JSON) {
-    console.log(JSON.stringify(rows, null, 2));
+    const keyed = rows.map(r => Object.fromEntries(headers.map((h, i) => [h.toLowerCase(), r[i] ?? null])));
+    console.log(JSON.stringify(keyed, null, 2));
     return;
   }
   const widths = headers.map((h, i) =>

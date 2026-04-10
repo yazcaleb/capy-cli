@@ -51,7 +51,9 @@ const msg = defineCommand({
   },
   async run({ args }) {
     const api = await import("../api.js");
-    await api.messageThread(args.id, args.text);
+    const fmt = await import("../output.js");
+    const result = await api.messageThread(args.id, args.text);
+    if (args.json) { fmt.out(result); return; }
     console.log("Message sent.");
   },
 });
@@ -64,7 +66,9 @@ const stop = defineCommand({
   },
   async run({ args }) {
     const api = await import("../api.js");
-    await api.stopThread(args.id);
+    const fmt = await import("../output.js");
+    const result = await api.stopThread(args.id);
+    if (args.json) { fmt.out(result); return; }
     console.log(`Stopped thread ${args.id}.`);
   },
 });

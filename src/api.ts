@@ -1,5 +1,15 @@
 import * as config from "./config.js";
+import { IS_JSON } from "./output.js";
 import type { Task, Thread, ThreadMessage, DiffData, Model, ListResponse, PullRequestRef } from "./types.js";
+
+function fail(code: string, message: string): never {
+  if (IS_JSON) {
+    console.log(JSON.stringify({ error: { code, message } }));
+  } else {
+    console.error(`capy: ${message}`);
+  }
+  process.exit(1);
+}
 
 async function rawRequest(apiKey: string, server: string, method: string, path: string, body?: unknown): Promise<any> {
   const url = `${server}${path}`;
@@ -17,29 +27,25 @@ async function rawRequest(apiKey: string, server: string, method: string, path: 
   try {
     res = await fetch(url, init);
   } catch (e: unknown) {
-    console.error(`capy: request failed — ${(e as Error).message}`);
-    process.exit(1);
+    fail("network_error", `request failed — ${(e as Error).message}`);
   }
 
   const text = await res.text();
   try {
     const data = JSON.parse(text);
     if (data.error) {
-      console.error(`capy: API error — ${data.error.message || data.error.code}`);
-      process.exit(1);
+      fail("api_error", `API error — ${data.error.message || data.error.code}`);
     }
     return data;
   } catch {
-    console.error("capy: bad API response:", text.slice(0, 200));
-    process.exit(1);
+    fail("bad_response", `bad API response: ${text.slice(0, 200)}`);
   }
 }
 
 async function request(method: string, path: string, body?: unknown): Promise<any> {
   const cfg = config.load();
   if (!cfg.apiKey) {
-    console.error("capy: API key not configured. Run: capy init");
-    process.exit(1);
+    fail("no_api_key", "API key not configured. Run: capy init");
   }
   return rawRequest(cfg.apiKey, cfg.server, method, path, body);
 }

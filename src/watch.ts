@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import * as config from "./config.js";
 import type { WatchEntry } from "./types.js";
 
@@ -9,7 +9,7 @@ function getCrontab(): string {
 }
 
 function setCrontab(content: string): void {
-  execSync(`echo ${JSON.stringify(content)} | crontab -`, { encoding: "utf8" });
+  execSync("crontab -", { input: content, encoding: "utf8" });
 }
 
 export function add(id: string, type: string, intervalMin: number): boolean {
@@ -53,8 +53,9 @@ export function notify(text: string): boolean {
   const cfg = config.load();
   const cmd = cfg.notifyCommand || "openclaw system event --text {text} --mode now";
   try {
-    execSync(cmd.replace("{text}", JSON.stringify(text)), {
-      encoding: "utf8", timeout: 15000,
+    const parts = cmd.replace("{text}", text).split(/\s+/);
+    execFileSync(parts[0], parts.slice(1), {
+      encoding: "utf8", timeout: 15000, stdio: "pipe",
     });
     return true;
   } catch { return false; }

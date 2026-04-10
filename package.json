@@ -1,17 +1,19 @@
 {
   "name": "capyai",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "type": "module",
   "description": "Unofficial Capy.ai CLI for agent orchestration with quality gates",
   "bin": {
-    "capy": "./bin/capy.js"
+    "capy": "./bin/capy.js",
+    "capy-mcp": "./bin/capy-mcp.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "files": [
     "bin/",
-    "src/"
+    "src/",
+    "skills/"
   ],
   "engines": {
     "node": ">=18"
@@ -22,7 +24,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/PlawIO/capy-cli"
+    "url": "https://github.com/yazcaleb/capy-cli"
   },
   "keywords": [
     "capy",
@@ -33,6 +35,8 @@
   ],
   "dependencies": {
     "@clack/prompts": "^1.2.0",
-    "citty": "^0.2.2"
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "citty": "^0.2.2",
+    "zod": "^3.24.0"
   }
 }

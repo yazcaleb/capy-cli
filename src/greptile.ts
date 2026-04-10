@@ -1,14 +1,19 @@
 import * as config from "./config.js";
+import { IS_JSON } from "./output.js";
 import type { UnaddressedIssue } from "./types.js";
 
 const MCP_URL = "https://api.greptile.com/mcp";
+
+function warn(msg: string): void {
+  if (!IS_JSON) console.error(msg);
+}
 
 async function mcp(method: string, params: Record<string, unknown>): Promise<any> {
   const cfg = config.load();
   const apiKey = cfg.greptileApiKey || process.env.GREPTILE_API_KEY || "";
   if (!apiKey) {
-    console.error("capy: GREPTILE_API_KEY not set. Run: capy config greptileApiKey <key>");
-    process.exit(1);
+    warn("capy: GREPTILE_API_KEY not set. Run: capy config greptileApiKey <key>");
+    return null;
   }
 
   const body = {
@@ -34,7 +39,7 @@ async function mcp(method: string, params: Record<string, unknown>): Promise<any
       signal: AbortSignal.timeout(30000),
     });
   } catch (e: unknown) {
-    console.error(`greptile: request failed — ${(e as Error).message}`);
+    warn(`greptile: request failed — ${(e as Error).message}`);
     return null;
   }
 
@@ -42,7 +47,7 @@ async function mcp(method: string, params: Record<string, unknown>): Promise<any
   try {
     const data = JSON.parse(text);
     if (data.error) {
-      console.error(`greptile: ${data.error.message || JSON.stringify(data.error)}`);
+      warn(`greptile: ${data.error.message || JSON.stringify(data.error)}`);
       return null;
     }
     if (data.result?.content) {
@@ -53,7 +58,7 @@ async function mcp(method: string, params: Record<string, unknown>): Promise<any
     }
     return data.result;
   } catch {
-    console.error("greptile: bad response:", text.slice(0, 300));
+    warn(`greptile: bad response: ${text.slice(0, 300)}`);
     return null;
   }
 }
@@ -121,7 +126,7 @@ export async function freshReview(repo: string, prNumber: number, defaultBranch?
   const reviewId = trigger.codeReviewId || trigger.id;
   if (!reviewId) return trigger;
 
-  console.error(`greptile: review triggered (${reviewId}), waiting...`);
+  warn(`greptile: review triggered (${reviewId}), waiting...`);
   return waitForReview(reviewId);
 }
 

@@ -98,8 +98,9 @@ export function diffHasTests(files: DiffFile[]): boolean {
 
 export function getUnresolvedThreads(repo: string, number: number): { body: string; author: string }[] {
   try {
-    const query = `query { repository(owner:"${repo.split("/")[0]}", name:"${repo.split("/")[1]}") { pullRequest(number:${number}) { reviewThreads(first:100) { nodes { isResolved isOutdated comments(first:1) { nodes { body author { login } } } } } } } }`;
-    const out = execFileSync("gh", ["api", "graphql", "-f", `query=${query}`], {
+    const query = `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first:100) { nodes { isResolved isOutdated comments(first:1) { nodes { body author { login } } } } } } } }`;
+    const [owner, name] = repo.split("/");
+    const out = execFileSync("gh", ["api", "graphql", "-f", `query=${query}`, "-F", `owner=${owner}`, "-F", `name=${name}`, "-F", `number=${number}`], {
       encoding: "utf8", timeout: 15000,
     });
     const data = JSON.parse(out);

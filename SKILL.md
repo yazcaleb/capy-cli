@@ -5,7 +5,7 @@ Agent orchestrator with quality gates. Zero dependencies.
 ## Install
 
 ```bash
-npm i -g capy-cli    # or: bun i -g capy-cli
+npm i -g capyai    # or: bun i -g capyai
 capy init                     # interactive setup
 ```
 
@@ -46,6 +46,7 @@ Captain is the primary agent. It reads code, plans, edits, commits, creates PRs,
 capy status                           # full dashboard
 capy list [in_progress|needs_review|backlog]
 capy get <id>                         # task details
+capy wait <id> --timeout=300          # block until done (for agents)
 capy watch <id>                       # cron poll, notify on completion
 capy threads list                     # captain threads
 ```
@@ -111,12 +112,29 @@ capy list --json            # task array
 Parse the `quality.pass` boolean from `capy review --json` to decide next action.
 
 When orchestrating:
-1. `capy captain "<precise prompt>"` to start work
-2. `capy watch <thread-id>` to get notified
+1. `capy captain "<precise prompt>" --json` to start work
+2. `capy wait <thread-id> --timeout=600 --json` to block until done
 3. `capy review <task-id> --json` to check gates
 4. If `pass: false`, read `gates` array for what's failing
-5. `capy retry <task-id> --fix="<specific fix>"` to retry
-6. If `pass: true`, `capy approve <task-id>`
+5. `capy retry <task-id> --fix="<specific fix>" --json` returns `newThread` ID
+6. `capy wait <new-thread-id> --json` to block on retry
+7. If `pass: true`, `capy approve <task-id> --json`
+
+### MCP server
+
+For agents that prefer MCP (Cursor, some Codex configs):
+
+```json
+{
+  "mcpServers": {
+    "capy": {
+      "command": "capy-mcp"
+    }
+  }
+}
+```
+
+Exposes tools: `capy_captain`, `capy_status`, `capy_review`, `capy_approve`, `capy_retry`, `capy_wait`.
 
 ### Prompting well
 
