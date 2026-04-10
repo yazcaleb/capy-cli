@@ -3,7 +3,7 @@ name: capy
 description: Orchestrate Capy.ai coding agents with quality gates. Delegate coding work, wait for completion, review quality, approve or retry.
 metadata:
   author: yazcaleb
-  version: "0.3.6"
+  version: "0.3.7"
 ---
 
 # capy

@@ -1,6 +1,6 @@
 {
   "name": "capyai",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "type": "module",
   "description": "Unofficial Capy.ai CLI for agent orchestration with quality gates",
   "bin": {

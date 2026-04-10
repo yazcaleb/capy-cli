@@ -34,15 +34,16 @@ async function rawRequest(apiKey: string, server: string, method: string, path: 
   }
 
   const text = await res.text();
+  let data: any;
   try {
-    const data = JSON.parse(text);
-    if (data.error) {
-      fail("api_error", `API error — ${data.error.message || data.error.code}`);
-    }
-    return data;
+    data = JSON.parse(text);
   } catch {
     fail("bad_response", `bad API response: ${text.slice(0, 200)}`);
   }
+  if (data.error) {
+    fail(data.error.code || "api_error", data.error.message || "unknown API error");
+  }
+  return data;
 }
 
 async function request(method: string, path: string, body?: unknown): Promise<any> {
