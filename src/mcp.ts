@@ -200,6 +200,88 @@ server.registerTool("capy_retry", {
   } catch (e) { return err(e); }
 });
 
+server.registerTool("capy_triage", {
+  description: "Actionable triage of all tasks. Fetches details + diffs in parallel. Categorizes into: merged, ready, needs_pr, stuck, backlog, in_progress. Includes diff stats, PR state, credit usage, and recommendations.",
+  inputSchema: {
+    ids: z.array(z.string()).optional().describe("Specific task IDs to triage. Omit for all tasks."),
+  },
+  annotations: { readOnlyHint: true },
+}, async ({ ids }) => {
+  try {
+    const github = await import("./github.js");
+    const cfg = config.load();
+
+    let tasks: any[];
+    if (ids?.length) {
+      tasks = await Promise.all(ids.map(id => api.getTask(id)));
+    } else {
+      const data = await api.listTasks({ limit: 100 });
+      tasks = data.items || [];
+    }
+
+    const enriched = await Promise.all(tasks.map(async (task: any) => {
+      const id = task.identifier || task.id;
+      let detail: any = task;
+      let diff: any = null;
+      try { if (!task.jams) detail = await api.getTask(id); } catch {}
+      try { diff = await api.getDiff(id); } catch {}
+
+      if (detail.pullRequest?.number && detail.pullRequest.state === "closed") {
+        const repo = detail.pullRequest.repoFullName || cfg.repos[0]?.repoFullName;
+        if (repo) {
+          const ghPR = github.getPR(repo, detail.pullRequest.number);
+          if (ghPR) detail.pullRequest.state = ghPR.state.toLowerCase();
+        }
+      }
+
+      const lastJam = (detail.jams || []).at(-1);
+      const credits = lastJam?.credits;
+      const pr = detail.pullRequest?.number ? { number: detail.pullRequest.number, state: detail.pullRequest.state || "?", url: detail.pullRequest.url } : null;
+      const diffStats = diff?.stats ? { files: diff.stats.files || 0, additions: diff.stats.additions || 0, deletions: diff.stats.deletions || 0 } : null;
+
+      let category: string;
+      if (detail.status === "backlog") category = "backlog";
+      else if (detail.status === "in_progress") category = "in_progress";
+      else if (pr?.state === "merged") category = "merged";
+      else if (pr && pr.state === "open") category = "ready";
+      else if (diffStats && diffStats.files > 0 && !pr) category = "needs_pr";
+      else if (detail.status === "needs_review" && (!diffStats || diffStats.files === 0)) category = "stuck";
+      else category = "stuck";
+
+      return {
+        identifier: detail.identifier || id,
+        title: detail.title || "",
+        status: detail.status,
+        labels: detail.labels || [],
+        category,
+        pr,
+        diff: diffStats,
+        jam: lastJam ? { model: lastJam.model || "?", status: lastJam.status || "?", credits: { llm: typeof credits === "object" ? (credits?.llm ?? 0) : (credits || 0), vm: typeof credits === "object" ? (credits?.vm ?? 0) : 0 } } : null,
+      };
+    }));
+
+    const summary = {
+      total: enriched.length,
+      merged: enriched.filter((t: any) => t.category === "merged").length,
+      ready: enriched.filter((t: any) => t.category === "ready").length,
+      needs_pr: enriched.filter((t: any) => t.category === "needs_pr").length,
+      stuck: enriched.filter((t: any) => t.category === "stuck").length,
+      backlog: enriched.filter((t: any) => t.category === "backlog").length,
+      in_progress: enriched.filter((t: any) => t.category === "in_progress").length,
+    };
+
+    const recs: string[] = [];
+    const needsPr = enriched.filter((t: any) => t.category === "needs_pr");
+    const stuck = enriched.filter((t: any) => t.category === "stuck");
+    const ready = enriched.filter((t: any) => t.category === "ready");
+    if (needsPr.length) recs.push(`Create PRs: ${needsPr.map((t: any) => t.identifier).join(", ")}`);
+    if (ready.length) recs.push(`Review + approve: ${ready.map((t: any) => t.identifier).join(", ")}`);
+    if (stuck.length) recs.push(`Retry or stop: ${stuck.map((t: any) => t.identifier).join(", ")} (no diff produced)`);
+
+    return text({ summary, tasks: enriched, recommendations: recs });
+  } catch (e) { return err(e); }
+});
+
 // --- Status & monitoring ---
 
 server.registerTool("capy_status", {

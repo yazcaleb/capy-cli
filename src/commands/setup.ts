@@ -162,6 +162,7 @@ export const tools = defineCommand({
       captain:    { args: "<prompt>",              desc: "Start Captain thread" },
       build:      { args: "<prompt>",              desc: "Start Build agent (isolated)" },
       threads:    { args: "[list|get|msg|stop]",   desc: "Manage threads" },
+      triage:     { args: "[id,...]",               desc: "Actionable triage with diffs + recs" },
       status:     { args: "",                      desc: "Dashboard" },
       list:       { args: "[status]",              desc: "List tasks" },
       get:        { args: "<id>",                  desc: "Task details" },

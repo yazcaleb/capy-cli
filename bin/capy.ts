@@ -27,6 +27,7 @@ const main = defineCommand({
     models:      () => import("../src/commands/setup.js").then(m => m.models),
     tools:       () => import("../src/commands/setup.js").then(m => m.tools),
     status:      () => import("../src/commands/setup.js").then(m => m.status),
+    triage:      () => import("../src/commands/triage.js").then(m => m.triage),
     review:      () => import("../src/commands/quality.js").then(m => m.review),
     "re-review": () => import("../src/commands/quality.js").then(m => m.reReview),
     approve:     () => import("../src/commands/quality.js").then(m => m.approve),
