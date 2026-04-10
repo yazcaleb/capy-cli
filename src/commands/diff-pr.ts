@@ -29,7 +29,7 @@ export const pr = defineCommand({
   meta: { name: "pr", description: "Create a PR" },
   args: {
     id: { type: "positional", description: "Task ID", required: true },
-    title: { type: "positional", description: "PR title" },
+    title: { type: "positional", required: false, description: "PR title" },
     ...jsonArg,
   },
   async run({ args }) {

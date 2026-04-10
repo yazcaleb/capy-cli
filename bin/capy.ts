@@ -42,7 +42,12 @@ const main = defineCommand({
 });
 
 try {
-  await runCommand(main, { rawArgs: process.argv.slice(2) });
+  const args = process.argv.slice(2);
+  if (args.includes("--version") || args.includes("-v")) {
+    console.log(version);
+    process.exit(0);
+  }
+  await runCommand(main, { rawArgs: args });
 } catch (e) {
   if (e instanceof CapyError) {
     if (process.argv.includes("--json")) {

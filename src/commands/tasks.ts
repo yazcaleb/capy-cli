@@ -4,7 +4,7 @@ import { modelArgs, jsonArg, resolveModel } from "./_shared.js";
 export const list = defineCommand({
   meta: { name: "list", description: "List tasks", alias: "ls" },
   args: {
-    status: { type: "positional", description: "Filter by status" },
+    status: { type: "positional", required: false, description: "Filter by status" },
     ...jsonArg,
   },
   async run({ args }) {
@@ -84,7 +84,7 @@ export const stop = defineCommand({
   meta: { name: "stop", description: "Stop a task", alias: "kill" },
   args: {
     id: { type: "positional", description: "Task ID", required: true },
-    reason: { type: "positional", description: "Stop reason" },
+    reason: { type: "positional", required: false, description: "Stop reason" },
     ...jsonArg,
   },
   async run({ args }) {

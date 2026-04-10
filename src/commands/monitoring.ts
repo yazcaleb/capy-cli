@@ -99,7 +99,7 @@ export const _poll = defineCommand({
   meta: { name: "_poll", description: "Internal cron poll", hidden: true },
   args: {
     id: { type: "positional", description: "ID", required: true },
-    type: { type: "positional", description: "task or thread" },
+    type: { type: "positional", required: false, description: "task or thread" },
   },
   async run({ args }) {
     const api = await import("../api.js");

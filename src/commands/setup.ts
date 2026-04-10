@@ -102,8 +102,8 @@ export const init = defineCommand({
 export const config = defineCommand({
   meta: { name: "config", description: "Get/set config" },
   args: {
-    key: { type: "positional", description: "Config key (dot notation)" },
-    value: { type: "positional", description: "Value to set" },
+    key: { type: "positional", required: false, description: "Config key (dot notation)" },
+    value: { type: "positional", required: false, description: "Value to set" },
     ...jsonArg,
   },
   async run({ args }) {
