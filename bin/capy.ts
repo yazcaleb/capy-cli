@@ -24,6 +24,7 @@ const main = defineCommand({
     msg:         () => import("../src/commands/tasks.js").then(m => m.msg),
     diff:        () => import("../src/commands/diff-pr.js").then(m => m.diff),
     pr:          () => import("../src/commands/diff-pr.js").then(m => m.pr),
+    projects:    () => import("../src/commands/setup.js").then(m => m.projects),
     models:      () => import("../src/commands/setup.js").then(m => m.models),
     tools:       () => import("../src/commands/setup.js").then(m => m.tools),
     status:      () => import("../src/commands/setup.js").then(m => m.status),

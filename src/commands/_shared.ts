@@ -17,6 +17,14 @@ export const jsonArg = {
   json: { type: "boolean", description: "Machine-readable JSON output", default: false },
 } as const satisfies ArgsDef;
 
+export function shellEscape(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
+export function isThreadId(id: string): boolean {
+  return id.length > 20 || (id.length > 10 && !id.match(/^[A-Z]+-\d+$/));
+}
+
 export function resolveModel(args: Record<string, unknown>): string | null {
   if (args.model) return String(args.model);
   if (args.opus)   return "claude-opus-4-6";

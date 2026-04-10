@@ -5,9 +5,20 @@ import { createRequire } from "node:module";
 import * as api from "./api.js";
 import { CapyError } from "./api.js";
 import * as config from "./config.js";
+import { isThreadId } from "./commands/_shared.js";
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json");
+
+function pLimit(concurrency: number) {
+  let active = 0;
+  const queue: (() => void)[] = [];
+  return <T>(fn: () => Promise<T>): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      const run = () => { active++; fn().then(resolve, reject).finally(() => { active--; queue.length && queue.shift()!(); }); };
+      active < concurrency ? run() : queue.push(run);
+    });
+}
 
 const server = new McpServer({ name: "capy", version });
 
@@ -26,48 +37,62 @@ function structured(data: Record<string, unknown>) {
   return { structuredContent: data, content: [{ type: "text" as const, text: JSON.stringify(data) }] };
 }
 
-function isThreadId(id: string): boolean {
-  return id.length > 20 || (id.length > 10 && !id.match(/^[A-Z]+-\d+$/));
-}
-
 // --- Orchestration ---
 
 server.registerTool("capy_captain", {
-  description: "Start a Captain thread to delegate coding work to a Capy agent",
+  description: "Start a Captain thread. Use resume to continue from a previous task with auto-gathered context (diff, CI, reviews).",
   inputSchema: {
-    prompt: z.string().describe("What the agent should do. Be specific: files, functions, acceptance criteria."),
+    prompt: z.string().optional().describe("What the agent should do. Required unless using resume."),
     model: z.string().optional().describe("Model ID override (default: config defaultModel)"),
+    resume: z.string().optional().describe("Task ID to resume from. Auto-gathers context from previous attempt."),
+    fix: z.string().optional().describe("Specific fix instructions (used with resume)"),
   },
   outputSchema: {
     threadId: z.string(),
     url: z.string(),
   },
   annotations: { openWorldHint: true },
-}, async ({ prompt, model }) => {
+}, async ({ prompt, model, resume, fix }) => {
   try {
     const cfg = config.load();
+    if (resume) {
+      const { resumeTask } = await import("./resume.js");
+      const r = await resumeTask(resume, { prompt, fix, model, mode: "captain" });
+      return structured({ threadId: r.threadId, url: `https://capy.ai/project/${cfg.projectId}/captain/${r.threadId}`, originalTask: r.originalTask, resumed: r.resumed });
+    }
+    if (!prompt) return err(new Error("prompt is required (or use resume with a task ID)"));
     const data = await api.createThread(prompt, model);
     return structured({ threadId: data.id, url: `https://capy.ai/project/${cfg.projectId}/captain/${data.id}` });
   } catch (e) { return err(e); }
 });
 
 server.registerTool("capy_build", {
-  description: "Start a Build agent for small isolated tasks (single-file fixes, scripts)",
+  description: "Start a Build agent for small isolated tasks. Use resume to continue from a previous task.",
   inputSchema: {
-    prompt: z.string().describe("What to build. Be specific."),
+    prompt: z.string().optional().describe("What to build. Required unless using resume."),
     model: z.string().optional().describe("Model ID override"),
     title: z.string().optional().describe("Short task title"),
+    resume: z.string().optional().describe("Task ID to resume from."),
+    fix: z.string().optional().describe("Specific fix instructions (used with resume)"),
   },
   outputSchema: {
     id: z.string(),
     identifier: z.string(),
     status: z.string(),
+    url: z.string(),
   },
   annotations: { openWorldHint: true },
-}, async ({ prompt, model, title }) => {
+}, async ({ prompt, model, title, resume, fix }) => {
   try {
+    const cfg = config.load();
+    if (resume) {
+      const { resumeTask } = await import("./resume.js");
+      const r = await resumeTask(resume, { prompt, fix, model, mode: "build" });
+      return structured({ id: r.threadId, identifier: r.originalTask, status: "in_progress", url: `https://capy.ai/project/${cfg.projectId}/tasks/${r.threadId}`, originalTask: r.originalTask });
+    }
+    if (!prompt) return err(new Error("prompt is required (or use resume with a task ID)"));
     const data = await api.createTask(prompt, model, { title, start: true });
-    return structured({ id: data.id, identifier: data.identifier, status: data.status });
+    return structured({ id: data.id, identifier: data.identifier, status: data.status, url: `https://capy.ai/project/${cfg.projectId}/tasks/${data.id}` });
   } catch (e) { return err(e); }
 });
 
@@ -89,12 +114,19 @@ server.registerTool("capy_wait", {
       : new Set(["needs_review", "archived", "completed", "failed"]);
 
     const start = Date.now();
+    let lastData: any = null;
     while (Date.now() - start < timeoutMs) {
-      const data = isThread ? await api.getThread(id) : await api.getTask(id);
-      if (terminal.has(data.status)) return text(data);
+      try {
+        lastData = isThread ? await api.getThread(id) : await api.getTask(id);
+        if (terminal.has(lastData.status)) return text(lastData);
+      } catch (e) {
+        if (e instanceof CapyError && ["not_found", "unauthorized", "forbidden", "no_api_key"].includes(e.code)) {
+          return err(e);
+        }
+      }
       await new Promise(r => setTimeout(r, intervalMs));
     }
-    return { content: [{ type: "text" as const, text: JSON.stringify({ error: { code: "timeout", message: `Timed out after ${timeout || 300}s` } }) }], isError: true as const };
+    return { content: [{ type: "text" as const, text: JSON.stringify({ error: { code: "timeout", message: `Timed out after ${timeout || 300}s`, lastStatus: lastData?.status || "unknown" } }) }], isError: true as const };
   } catch (e) { return err(e); }
 });
 
@@ -102,15 +134,6 @@ server.registerTool("capy_review", {
   description: "Run quality gates on a task (pr_exists, pr_open, ci, greptile, threads, tests)",
   inputSchema: {
     id: z.string().describe("Task ID"),
-  },
-  outputSchema: {
-    task: z.string(),
-    quality: z.object({
-      pass: z.boolean(),
-      passed: z.number(),
-      total: z.number(),
-      summary: z.string(),
-    }),
   },
   annotations: { readOnlyHint: true },
 }, async ({ id }) => {
@@ -134,6 +157,12 @@ server.registerTool("capy_approve", {
   outputSchema: {
     task: z.string(),
     approved: z.boolean(),
+    quality: z.object({
+      pass: z.boolean(),
+      passed: z.number(),
+      total: z.number(),
+      summary: z.string(),
+    }),
   },
   annotations: { openWorldHint: true },
 }, async ({ id, force }) => {
@@ -146,13 +175,13 @@ server.registerTool("capy_approve", {
 
     if (approved && cfg.approveCommand) {
       try {
-        const { execFileSync } = await import("node:child_process");
-        const parts = cfg.approveCommand
-          .replace("{task}", task.identifier || task.id)
-          .replace("{title}", task.title || "")
-          .replace("{pr}", String(task.pullRequest?.number || ""))
-          .split(/\s+/);
-        execFileSync(parts[0], parts.slice(1), { encoding: "utf8", timeout: 15000, stdio: "pipe" });
+        const { execSync } = await import("node:child_process");
+        const { shellEscape } = await import("./commands/_shared.js");
+        const expanded = cfg.approveCommand
+          .replace("{task}", shellEscape(task.identifier || task.id))
+          .replace("{title}", shellEscape(task.title || ""))
+          .replace("{pr}", shellEscape(String(task.pullRequest?.number || "")));
+        execSync(expanded, { timeout: 15000, stdio: "pipe" });
       } catch {}
     }
 
@@ -161,7 +190,7 @@ server.registerTool("capy_approve", {
 });
 
 server.registerTool("capy_retry", {
-  description: "Retry a failed task with context from previous attempt. Creates a new Captain thread.",
+  description: "Alias for capy_captain with resume. Retry a failed task with auto-gathered context.",
   inputSchema: {
     id: z.string().describe("Task ID to retry"),
     fix: z.string().optional().describe("Specific fix instructions"),
@@ -169,44 +198,28 @@ server.registerTool("capy_retry", {
   },
   outputSchema: {
     originalTask: z.string(),
-    newThread: z.string(),
+    threadId: z.string(),
     model: z.string(),
   },
   annotations: { openWorldHint: true },
 }, async ({ id, fix, model }) => {
   try {
-    const task = await api.getTask(id);
+    const { resumeTask } = await import("./resume.js");
     const cfg = config.load();
-
-    let context = `Previous attempt: ${task.identifier} "${task.title}" [${task.status}]\n`;
-    try {
-      const d = await api.getDiff(id);
-      if (d.stats?.files && d.stats.files > 0) {
-        context += `\nPrevious diff: +${d.stats.additions} -${d.stats.deletions} in ${d.stats.files} files\n`;
-      }
-    } catch {}
-
-    let retryPrompt = `RETRY: This is a retry of a previous attempt that had issues.\n\nOriginal task: ${task.prompt || task.title}\n\n--- CONTEXT ---\n${context}\n`;
-    if (fix) retryPrompt += `--- FIX ---\n${fix}\n\n`;
-    retryPrompt += `Fix the issues. Include tests. Run tests before completing.\n`;
-
-    if (task.status === "in_progress") {
-      await api.stopTask(id, "Retrying with fixes");
-    }
-
     const m = model || cfg.defaultModel;
-    const data = await api.createThread(retryPrompt, m);
-    return structured({ originalTask: task.identifier, newThread: data.id, model: m });
+    const r = await resumeTask(id, { fix, model: m, mode: "captain" });
+    return structured({ originalTask: r.originalTask, threadId: r.threadId, model: m, resumed: r.resumed });
   } catch (e) { return err(e); }
 });
 
 server.registerTool("capy_triage", {
-  description: "Actionable triage of all tasks. Fetches details + diffs in parallel. Categorizes into: merged, ready, needs_pr, stuck, backlog, in_progress. Includes diff stats, PR state, credit usage, and recommendations.",
+  description: "Actionable triage of all tasks. Categorizes into: merged, ready, needs_pr, stuck, backlog, in_progress. Use brief=true for fast mode (skips diff fetching, ~2x faster).",
   inputSchema: {
     ids: z.array(z.string()).optional().describe("Specific task IDs to triage. Omit for all tasks."),
+    brief: z.boolean().optional().describe("Skip diff fetching for speed. Categories based on status + PR state only."),
   },
   annotations: { readOnlyHint: true },
-}, async ({ ids }) => {
+}, async ({ ids, brief }) => {
   try {
     const github = await import("./github.js");
     const cfg = config.load();
@@ -219,46 +232,73 @@ server.registerTool("capy_triage", {
       tasks = data.items || [];
     }
 
-    const enriched = await Promise.all(tasks.map(async (task: any) => {
-      const id = task.identifier || task.id;
-      let detail: any = task;
-      let diff: any = null;
-      try { if (!task.jams) detail = await api.getTask(id); } catch {}
-      try { diff = await api.getDiff(id); } catch {}
+    function categorize(status: string, pr: any, diffStats: any, brief: boolean) {
+      if (status === "backlog") return "backlog";
+      if (status === "in_progress") return "in_progress";
+      if (pr?.state === "merged") return "merged";
+      if (pr && pr.state === "open") return "ready";
+      if (status === "needs_review" && pr) return "ready";
+      if (status === "needs_review" && !pr) return (!brief && (!diffStats || diffStats.files === 0)) ? "stuck" : "needs_pr";
+      if (diffStats && diffStats.files > 0 && !pr) return "needs_pr";
+      return "stuck";
+    }
 
-      if (detail.pullRequest?.number && detail.pullRequest.state === "closed") {
-        const repo = detail.pullRequest.repoFullName || cfg.repos[0]?.repoFullName;
-        if (repo) {
-          const ghPR = github.getPR(repo, detail.pullRequest.number);
-          if (ghPR) detail.pullRequest.state = ghPR.state.toLowerCase();
+    let enriched: any[];
+    if (brief) {
+      enriched = tasks.map((task: any) => {
+        if (task.pullRequest?.number && task.pullRequest.state === "closed") {
+          const repo = task.pullRequest.repoFullName || cfg.repos[0]?.repoFullName;
+          if (repo) {
+            const ghPR = github.getPR(repo, task.pullRequest.number);
+            if (ghPR) task.pullRequest.state = ghPR.state.toLowerCase();
+          }
         }
-      }
+        const pr = task.pullRequest?.number ? { number: task.pullRequest.number, state: task.pullRequest.state || "?", url: task.pullRequest.url } : null;
+        return {
+          identifier: task.identifier || task.id,
+          title: task.title || "",
+          status: task.status,
+          labels: task.labels || [],
+          category: categorize(task.status, pr, null, true),
+          pr,
+          diff: null,
+          jam: null,
+        };
+      });
+    } else {
+      const limit = pLimit(5);
+      enriched = await Promise.all(tasks.map((task: any) => limit(async () => {
+        const id = task.identifier || task.id;
+        const [detail, diff] = await Promise.all([
+          task.jams ? task : api.getTask(id).catch(() => task),
+          api.getDiff(id).catch(() => null),
+        ]);
 
-      const lastJam = (detail.jams || []).at(-1);
-      const credits = lastJam?.credits;
-      const pr = detail.pullRequest?.number ? { number: detail.pullRequest.number, state: detail.pullRequest.state || "?", url: detail.pullRequest.url } : null;
-      const diffStats = diff?.stats ? { files: diff.stats.files || 0, additions: diff.stats.additions || 0, deletions: diff.stats.deletions || 0 } : null;
+        if (detail.pullRequest?.number && detail.pullRequest.state === "closed") {
+          const repo = detail.pullRequest.repoFullName || cfg.repos[0]?.repoFullName;
+          if (repo) {
+            const ghPR = github.getPR(repo, detail.pullRequest.number);
+            if (ghPR) detail.pullRequest.state = ghPR.state.toLowerCase();
+          }
+        }
 
-      let category: string;
-      if (detail.status === "backlog") category = "backlog";
-      else if (detail.status === "in_progress") category = "in_progress";
-      else if (pr?.state === "merged") category = "merged";
-      else if (pr && pr.state === "open") category = "ready";
-      else if (diffStats && diffStats.files > 0 && !pr) category = "needs_pr";
-      else if (detail.status === "needs_review" && (!diffStats || diffStats.files === 0)) category = "stuck";
-      else category = "stuck";
+        const lastJam = (detail.jams || []).at(-1);
+        const credits = lastJam?.credits;
+        const pr = detail.pullRequest?.number ? { number: detail.pullRequest.number, state: detail.pullRequest.state || "?", url: detail.pullRequest.url } : null;
+        const diffStats = diff?.stats ? { files: diff.stats.files || 0, additions: diff.stats.additions || 0, deletions: diff.stats.deletions || 0 } : null;
 
-      return {
-        identifier: detail.identifier || id,
-        title: detail.title || "",
-        status: detail.status,
-        labels: detail.labels || [],
-        category,
-        pr,
-        diff: diffStats,
-        jam: lastJam ? { model: lastJam.model || "?", status: lastJam.status || "?", credits: { llm: typeof credits === "object" ? (credits?.llm ?? 0) : (credits || 0), vm: typeof credits === "object" ? (credits?.vm ?? 0) : 0 } } : null,
-      };
-    }));
+        return {
+          identifier: detail.identifier || id,
+          title: detail.title || "",
+          status: detail.status,
+          labels: detail.labels || [],
+          category: categorize(detail.status, pr, diffStats, false),
+          pr,
+          diff: diffStats,
+          jam: lastJam ? { model: lastJam.model || "?", status: lastJam.status || "?", credits: { llm: typeof credits === "object" ? (credits?.llm ?? 0) : (credits || 0), vm: typeof credits === "object" ? (credits?.vm ?? 0) : 0 } } : null,
+        };
+      })));
+    }
 
     const summary = {
       total: enriched.length,
@@ -464,6 +504,38 @@ server.registerTool("capy_re_review", {
   } catch (e) { return err(e); }
 });
 
+server.registerTool("capy_projects", {
+  description: "List all projects accessible with the current API key",
+  inputSchema: {},
+  annotations: { readOnlyHint: true, idempotentHint: true },
+}, async () => {
+  try {
+    const data = await api.listProjectsAuth();
+    return text(data);
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_project", {
+  description: "Get project details (repos, task code, config)",
+  inputSchema: {
+    id: z.string().optional().describe("Project ID (defaults to current project)"),
+  },
+  outputSchema: {
+    id: z.string(),
+    name: z.string(),
+    taskCode: z.string(),
+    repos: z.array(z.object({ repoFullName: z.string(), branch: z.string() })),
+    createdAt: z.string().optional(),
+    updatedAt: z.string().optional(),
+  },
+  annotations: { readOnlyHint: true, idempotentHint: true },
+}, async ({ id }) => {
+  try {
+    const data = await api.getProject(id);
+    return structured({ id: data.id, name: data.name, taskCode: data.taskCode, repos: data.repos as unknown as Record<string, unknown>[], createdAt: data.createdAt, updatedAt: data.updatedAt });
+  } catch (e) { return err(e); }
+});
+
 server.registerTool("capy_models", {
   description: "List available AI models",
   inputSchema: {},
@@ -501,6 +573,17 @@ server.registerTool("capy_pool_update", {
 }, async (params) => {
   try {
     const data = await api.updateWarmPool(params);
+    return text(data);
+  } catch (e) { return err(e); }
+});
+
+server.registerTool("capy_pool_test", {
+  description: "Test warm pool VM boot with setup commands",
+  inputSchema: {},
+  annotations: { openWorldHint: true },
+}, async () => {
+  try {
+    const data = await api.testWarmPool();
     return text(data);
   } catch (e) { return err(e); }
 });

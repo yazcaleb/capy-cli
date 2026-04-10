@@ -209,13 +209,13 @@ export const approve = defineCommand({
       const approveCmd = cfg.approveCommand;
       if (approveCmd) {
         try {
-          const { execFileSync } = await import("node:child_process");
-          const parts = approveCmd
-            .replace("{task}", task.identifier || task.id)
-            .replace("{title}", task.title || "")
-            .replace("{pr}", String(task.pullRequest?.number || ""))
-            .split(/\s+/);
-          execFileSync(parts[0], parts.slice(1), { encoding: "utf8", timeout: 15000, stdio: "pipe" });
+          const { execSync } = await import("node:child_process");
+          const { shellEscape } = await import("./_shared.js");
+          const expanded = approveCmd
+            .replace("{task}", shellEscape(task.identifier || task.id))
+            .replace("{title}", shellEscape(task.title || ""))
+            .replace("{pr}", shellEscape(String(task.pullRequest?.number || "")));
+          execSync(expanded, { timeout: 15000, stdio: "pipe" });
           log.info("Post-approve hook ran.");
         } catch {}
       }
@@ -224,7 +224,7 @@ export const approve = defineCommand({
 });
 
 export const retry = defineCommand({
-  meta: { name: "retry", description: "Retry with failure context" },
+  meta: { name: "retry", description: "Alias for: capy captain --resume <id> --fix='...'" },
   args: {
     id: { type: "positional", description: "Task ID", required: true },
     fix: { type: "string", description: "Specific fix instructions" },
@@ -232,96 +232,25 @@ export const retry = defineCommand({
     ...jsonArg,
   },
   async run({ args }) {
-    const api = await import("../api.js");
     const config = await import("../config.js");
-    const github = await import("../github.js");
-    const greptileApi = await import("../greptile.js");
+    const { resumeTask } = await import("../resume.js");
     const fmt = await import("../output.js");
     const { log } = await import("@clack/prompts");
 
-    const task = await api.getTask(args.id);
     const cfg = config.load();
-
-    let context = `Previous attempt: ${task.identifier} "${task.title}" [${task.status}]\n`;
-
-    try {
-      const d = await api.getDiff(args.id);
-      if (d.stats?.files && d.stats.files > 0) {
-        context += `\nPrevious diff: +${d.stats.additions} -${d.stats.deletions} in ${d.stats.files} files\n`;
-        context += `Files changed: ${(d.files || []).map(f => f.path).join(", ")}\n`;
-      } else {
-        context += `\nPrevious diff: empty (agent produced no changes)\n`;
-      }
-    } catch { context += "\nPrevious diff: unavailable\n"; }
-
-    if (task.pullRequest?.number) {
-      const repo = task.pullRequest.repoFullName || cfg.repos[0]?.repoFullName || "";
-      const prNum = task.pullRequest.number;
-      const defaultBranch = cfg.repos.find(r => r.repoFullName === repo)?.branch || "main";
-      const reviewComments = github.getPRReviewComments(repo, prNum);
-      const ci = github.getCIStatus(repo, prNum);
-
-      const reviewProvider = cfg.quality?.reviewProvider || "greptile";
-      const hasGreptileKey = !!(cfg.greptileApiKey || process.env.GREPTILE_API_KEY);
-
-      if (reviewProvider === "greptile" && hasGreptileKey) {
-        const unaddressed = await greptileApi.getUnaddressedIssues(repo, prNum, defaultBranch);
-        if (unaddressed.length > 0) {
-          context += `\nUnaddressed Greptile issues (${unaddressed.length}):\n`;
-          unaddressed.forEach(u => {
-            context += `  ${u.file}:${u.line}: ${u.body}\n`;
-            if (u.suggestedCode) context += `    Suggested fix: ${u.suggestedCode.slice(0, 200)}\n`;
-          });
-        } else {
-          context += `\nGreptile: all issues addressed\n`;
-        }
-      } else {
-        const issueComments = github.getPRIssueComments(repo, prNum);
-        const greptileReview = github.parseGreptileReview(issueComments);
-        if (greptileReview) {
-          context += `\nGreptile review: ${greptileReview.score}/5 (stale, may not reflect latest)\n`;
-        }
-      }
-
-      if (ci && !ci.allGreen) {
-        context += `\nCI failures: ${ci.failing.map(f => f.name).join(", ")}\n`;
-      }
-      if (reviewComments.length) {
-        context += `\nReview comments (${reviewComments.length}):\n`;
-        reviewComments.slice(0, 5).forEach((c: any) => {
-          context += `  ${c.path}:${c.line || "?"}: ${(c.body || "").slice(0, 150)}\n`;
-        });
-      }
-    }
-
-    const originalPrompt = task.prompt || task.title;
-    let retryPrompt = `RETRY: This is a retry of a previous attempt that had issues.\n\n`;
-    retryPrompt += `Original task: ${originalPrompt}\n\n`;
-    retryPrompt += `--- CONTEXT FROM PREVIOUS ATTEMPT ---\n${context}\n`;
-
-    if (args.fix) {
-      retryPrompt += `--- SPECIFIC FIX REQUESTED ---\n${args.fix}\n\n`;
-    }
-
-    retryPrompt += `--- INSTRUCTIONS ---\n`;
-    retryPrompt += `Fix the issues from the previous attempt. Do not repeat the same mistakes.\n`;
-    retryPrompt += `Include tests. Run tests before completing. Verify CI will pass.\n`;
-
-    if (task.status === "in_progress") {
-      await api.stopTask(args.id, "Retrying with fixes");
-      if (!args.json) log.info(`Stopped ${task.identifier}.`);
-    }
-
     const model = resolveModel(args) || cfg.defaultModel;
-    const data = await api.createThread(retryPrompt, model);
+    const r = await resumeTask(args.id, { fix: args.fix, model, mode: "captain" });
 
     if (args.json) {
-      fmt.out({ originalTask: task.identifier, newThread: data.id, model, contextLines: context.split("\n").length });
+      fmt.out({ originalTask: r.originalTask, threadId: r.threadId, resumed: r.resumed, model });
       return;
     }
 
-    log.success(`Retry started: https://capy.ai/project/${cfg.projectId}/captain/${data.id}`);
-    log.info(`Thread: ${data.id}  Model: ${model}`);
-    log.info(`Context included: ${context.split("\n").length} lines from previous attempt.`);
+    if (r.resumed) {
+      log.success(`Messaged existing thread for ${r.originalTask}: https://capy.ai/project/${cfg.projectId}/captain/${r.threadId}`);
+    } else {
+      log.success(`Retry started (new thread): https://capy.ai/project/${cfg.projectId}/captain/${r.threadId}`);
+    }
+    log.info(`Thread: ${r.threadId}  Model: ${model}`);
   },
 });

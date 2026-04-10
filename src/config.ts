@@ -13,10 +13,8 @@ const DEFAULTS: CapyConfig = {
   repos: [],
   defaultModel: "gpt-5.4",
   quality: {
-    minReviewScore: 4,
     requireCI: true,
     requireTests: true,
-    requireLinearLink: true,
     reviewProvider: "greptile",
   },
   watchInterval: 3,
@@ -56,7 +54,7 @@ export function load(): CapyConfig {
 
 export function save(cfg: CapyConfig): void {
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n");
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
 }
 
 export function get(key: string): unknown {

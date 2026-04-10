@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { jsonArg } from "./_shared.js";
+import { jsonArg, isThreadId } from "./_shared.js";
 
 export const watch = defineCommand({
   meta: { name: "watch", description: "Poll + notify on completion" },
@@ -14,7 +14,7 @@ export const watch = defineCommand({
     const fmt = await import("../output.js");
 
     const interval = Math.max(1, Math.min(parseInt(args.interval) || config.load().watchInterval, 30));
-    const type = (args.id.length > 20 || (args.id.length > 10 && !args.id.match(/^[A-Z]+-\d+$/))) ? "thread" : "task";
+    const type = isThreadId(args.id) ? "thread" : "task";
     const added = w.add(args.id, type, interval);
 
     if (args.json) { fmt.out({ id: args.id, type, interval, added }); return; }
@@ -70,7 +70,7 @@ export const wait = defineCommand({
 
     const timeoutMs = Math.max(10, parseInt(args.timeout) || 300) * 1000;
     const intervalMs = Math.max(5, Math.min(parseInt(args.interval) || 10, 60)) * 1000;
-    const isThread = args.id.length > 20 || (args.id.length > 10 && !args.id.match(/^[A-Z]+-\d+$/));
+    const isThread = isThreadId(args.id);
     const terminalTask = new Set(["needs_review", "archived", "completed", "failed"]);
     const terminalThread = new Set(["idle", "archived", "completed"]);
     const terminal = isThread ? terminalThread : terminalTask;
@@ -78,19 +78,32 @@ export const wait = defineCommand({
     const start = Date.now();
     if (!args.json) process.stderr.write(`Waiting for ${args.id} (${isThread ? "thread" : "task"})...`);
 
+    const PERMANENT_ERRORS = new Set(["no_api_key", "not_found", "unauthorized", "forbidden"]);
+
+    let lastStatus = "unknown";
     while (Date.now() - start < timeoutMs) {
-      const data = isThread ? await api.getThread(args.id) : await api.getTask(args.id);
-      if (terminal.has(data.status)) {
-        if (args.json) { fmt.out(data); return; }
-        console.log(`\n${isThread ? "Thread" : "Task"} ${data.status}.`);
-        return;
+      try {
+        const data = isThread ? await api.getThread(args.id) : await api.getTask(args.id);
+        lastStatus = data.status;
+        if (terminal.has(data.status)) {
+          if (args.json) { fmt.out(data); return; }
+          console.log(`\n${isThread ? "Thread" : "Task"} ${data.status}.`);
+          return;
+        }
+      } catch (e: unknown) {
+        const { CapyError } = await import("../api.js");
+        if (e instanceof CapyError && PERMANENT_ERRORS.has(e.code)) {
+          if (args.json) { fmt.out({ error: { code: e.code, message: e.message } }); process.exit(1); }
+          console.error(`\ncapy: ${e.message}`);
+          process.exit(1);
+        }
       }
       if (!args.json) process.stderr.write(".");
       await new Promise(r => setTimeout(r, intervalMs));
     }
 
-    if (args.json) { fmt.out({ error: { code: "timeout", message: `Timed out after ${args.timeout}s` } }); process.exit(1); }
-    console.error(`\ncapy: timed out after ${args.timeout}s`);
+    if (args.json) { fmt.out({ error: { code: "timeout", message: `Timed out after ${args.timeout}s`, lastStatus } }); process.exit(1); }
+    console.error(`\ncapy: timed out after ${args.timeout}s (last status: ${lastStatus})`);
     process.exit(1);
   },
 });

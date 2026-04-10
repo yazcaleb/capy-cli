@@ -1,8 +1,6 @@
 export interface QualityConfig {
-  minReviewScore: number;
   requireCI: boolean;
   requireTests: boolean;
-  requireLinearLink: boolean;
   reviewProvider: string;
 }
 

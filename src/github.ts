@@ -42,7 +42,7 @@ export function getCIStatus(repo: string, number: number, prData?: PRData | null
   const checks: StatusCheck[] = pr.statusCheckRollup || [];
   const total = checks.length;
   const passing = checks.filter(c =>
-    c.conclusion === "SUCCESS" || c.conclusion === "NEUTRAL" || c.status === "COMPLETED"
+    c.conclusion === "SUCCESS" || c.conclusion === "NEUTRAL"
   ).length;
   const failing = checks.filter(c =>
     c.conclusion === "FAILURE" || c.conclusion === "ERROR" || c.conclusion === "TIMED_OUT"

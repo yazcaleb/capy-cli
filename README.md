@@ -54,6 +54,8 @@ Every command supports `--json` for machine-readable output.
 | `capy pr <id>` | Create PR for task |
 | `capy watch <id>` | Cron poll + notify on completion |
 | `capy threads [list\|get\|msg\|stop\|messages]` | Manage Captain threads |
+| `capy projects [list\|get]` | List/get projects |
+| `capy triage [ids] [--brief]` | Actionable triage with categories + recommendations |
 | `capy pool [status\|set\|test\|instances\|clear]` | Manage warm pool VMs |
 | `capy models` | List available models |
 | `capy config [key] [value]` | Get/set config |
@@ -88,7 +90,7 @@ For agents that prefer MCP over CLI:
 }
 ```
 
-21 tools with full API parity, including warm pool management.
+25 tools with full API parity, including projects, triage, and warm pool management.
 
 ## Config
 

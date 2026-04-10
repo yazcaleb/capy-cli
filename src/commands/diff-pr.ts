@@ -30,6 +30,8 @@ export const pr = defineCommand({
   args: {
     id: { type: "positional", description: "Task ID", required: true },
     title: { type: "positional", required: false, description: "PR title" },
+    description: { type: "string", description: "PR body/description" },
+    draft: { type: "boolean", description: "Create as draft PR", default: false },
     ...jsonArg,
   },
   async run({ args }) {
@@ -37,7 +39,10 @@ export const pr = defineCommand({
     const fmt = await import("../output.js");
     const { log } = await import("@clack/prompts");
 
-    const body = args.title ? { title: args.title } : {};
+    const body: Record<string, unknown> = {};
+    if (args.title) body.title = args.title;
+    if (args.description) body.description = args.description;
+    if (args.draft) body.draft = true;
     const data = await api.createPR(args.id, body);
     if (args.json) { fmt.out(data); return; }
     log.success(`PR: ${data.url}`);

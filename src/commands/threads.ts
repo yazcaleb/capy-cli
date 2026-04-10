@@ -3,13 +3,17 @@ import { jsonArg } from "./_shared.js";
 
 const list = defineCommand({
   meta: { name: "list", description: "List threads" },
-  args: { ...jsonArg },
+  args: {
+    limit: { type: "string", description: "Max results (default 10)" },
+    cursor: { type: "string", description: "Pagination cursor from previous response" },
+    ...jsonArg,
+  },
   async run({ args }) {
     const api = await import("../api.js");
     const fmt = await import("../output.js");
 
-    const data = await api.listThreads();
-    if (args.json) { fmt.out(data.items || []); return; }
+    const data = await api.listThreads({ limit: args.limit ? parseInt(args.limit) : undefined, cursor: args.cursor });
+    if (args.json) { fmt.out({ items: data.items || [], nextCursor: data.nextCursor, hasMore: data.hasMore }); return; }
     if (!data.items?.length) { console.log("No threads."); return; }
     fmt.table(["ID", "STATUS", "TITLE"], data.items.map(t => [
       t.id.slice(0, 16), t.status, (t.title || "(untitled)").slice(0, 40),

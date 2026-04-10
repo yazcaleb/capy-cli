@@ -5,14 +5,16 @@ export const list = defineCommand({
   meta: { name: "list", description: "List tasks", alias: "ls" },
   args: {
     status: { type: "positional", required: false, description: "Filter by status" },
+    limit: { type: "string", description: "Max results (default 30)" },
+    cursor: { type: "string", description: "Pagination cursor from previous response" },
     ...jsonArg,
   },
   async run({ args }) {
     const api = await import("../api.js");
     const fmt = await import("../output.js");
 
-    const data = await api.listTasks({ status: args.status });
-    if (args.json) { fmt.out(data.items || []); return; }
+    const data = await api.listTasks({ status: args.status, limit: args.limit ? parseInt(args.limit) : undefined, cursor: args.cursor });
+    if (args.json) { fmt.out({ items: data.items || [], nextCursor: data.nextCursor, hasMore: data.hasMore }); return; }
     if (!data.items?.length) { console.log("No tasks."); return; }
     fmt.table(["ID", "STATUS", "TITLE", "PR"], data.items.map(t => [
       t.identifier,

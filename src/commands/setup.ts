@@ -133,6 +133,50 @@ export const config = defineCommand({
   },
 });
 
+const projectsList = defineCommand({
+  meta: { name: "list", description: "List projects" },
+  args: { ...jsonArg },
+  async run({ args }) {
+    const api = await import("../api.js");
+    const fmt = await import("../output.js");
+
+    const projects = await api.listProjectsAuth();
+    if (args.json) { fmt.out(projects); return; }
+    if (!projects.length) { console.log("No projects."); return; }
+    fmt.table(["ID", "NAME", "CODE", "REPOS"], projects.map(p => [
+      p.id.slice(0, 16), p.name, p.taskCode, String(p.repos.length),
+    ]));
+  },
+});
+
+const projectsGet = defineCommand({
+  meta: { name: "get", description: "Project details" },
+  args: {
+    id: { type: "positional", required: false, description: "Project ID (defaults to current)" },
+    ...jsonArg,
+  },
+  async run({ args }) {
+    const api = await import("../api.js");
+    const fmt = await import("../output.js");
+    const { log } = await import("@clack/prompts");
+
+    const data = await api.getProject(args.id);
+    if (args.json) { fmt.out(data); return; }
+    log.info(`Project: ${data.name}\nID:      ${data.id}\nCode:    ${data.taskCode}`);
+    if (data.repos.length) {
+      console.log(`Repos:`);
+      data.repos.forEach(r => console.log(`  ${r.repoFullName} (${r.branch})`));
+    }
+    if (data.createdAt) console.log(`Created: ${data.createdAt}`);
+  },
+});
+
+export const projects = defineCommand({
+  meta: { name: "projects", description: "List and manage projects" },
+  default: "list",
+  subCommands: { list: projectsList, get: projectsGet },
+});
+
 export const models = defineCommand({
   meta: { name: "models", description: "List available models" },
   args: { ...jsonArg },
@@ -159,8 +203,8 @@ export const tools = defineCommand({
     const { log } = await import("@clack/prompts");
 
     const all: Record<string, { args: string; desc: string }> = {
-      captain:    { args: "<prompt>",              desc: "Start Captain thread" },
-      build:      { args: "<prompt>",              desc: "Start Build agent (isolated)" },
+      captain:    { args: "<prompt> [--resume <id>]", desc: "Start Captain thread (or resume)" },
+      build:      { args: "<prompt> [--resume <id>]", desc: "Start Build agent (or resume)" },
       threads:    { args: "[list|get|msg|stop]",   desc: "Manage threads" },
       triage:     { args: "[id,...]",               desc: "Actionable triage with diffs + recs" },
       status:     { args: "",                      desc: "Dashboard" },
@@ -174,11 +218,12 @@ export const tools = defineCommand({
       review:     { args: "<id>",                  desc: "Quality gates check" },
       "re-review":{ args: "<id>",                  desc: "Trigger Greptile re-review" },
       approve:    { args: "<id>",                  desc: "Approve if gates pass" },
-      retry:      { args: "<id> [--fix=...]",      desc: "Retry with failure context" },
+      retry:      { args: "<id> [--fix=...]",      desc: "Alias for captain --resume" },
       wait:       { args: "<id>",                  desc: "Block until done" },
       watch:      { args: "<id>",                  desc: "Poll + notify on completion" },
       unwatch:    { args: "<id>",                  desc: "Stop watching" },
       watches:    { args: "",                      desc: "List watches" },
+      projects:   { args: "[list|get]",              desc: "List/get projects" },
       pool:       { args: "[status|set|test|...]", desc: "Manage warm pool VMs" },
       models:     { args: "",                      desc: "List models" },
       tools:      { args: "",                      desc: "This list" },

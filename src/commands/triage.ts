@@ -24,6 +24,7 @@ export const triage = defineCommand({
   meta: { name: "triage", description: "Actionable status for all tasks with diffs, PR state, and recommendations" },
   args: {
     ids: { type: "positional", required: false, description: "Specific task IDs (comma-separated or space-separated)" },
+    brief: { type: "boolean", description: "Fast mode: skip diff fetching, just categorize by status + PR state", default: false },
     ...jsonArg,
   },
   async run({ args }) {
@@ -52,22 +53,25 @@ export const triage = defineCommand({
     }
 
     // Fetch detail + diff in parallel for all tasks
+    const brief = !!args.brief;
+    let results: Awaited<ReturnType<typeof enrichTasks>>;
     if (!args.json) {
       const s = spinner();
-      s.start(`Loading ${tasks.length} tasks (details + diffs)...`);
-      var results = await enrichTasks(api, tasks, cfg);
+      s.start(`Loading ${tasks.length} tasks${brief ? "" : " (details + diffs)"}...`);
+      results = await enrichTasks(api, tasks, cfg, brief);
       s.stop(`${tasks.length} tasks loaded`);
     } else {
-      var results = await enrichTasks(api, tasks, cfg);
+      results = await enrichTasks(api, tasks, cfg, brief);
     }
 
-    // Cross-ref PR state with GitHub
-    for (const r of results) {
-      if (r.pr && r.pr.state === "closed") {
+    // Cross-ref closed PRs with GitHub to detect merged state (skip in brief mode)
+    if (!brief) {
+      const closed = results.filter(r => r.pr && r.pr.state === "closed");
+      for (const r of closed) {
         const repo = r._raw?.pullRequest?.repoFullName || cfg.repos[0]?.repoFullName;
         if (repo) {
-          const ghPR = github.getPR(repo, r.pr.number);
-          if (ghPR) r.pr.state = ghPR.state.toLowerCase();
+          const ghPR = github.getPR(repo, r.pr!.number);
+          if (ghPR) r.pr!.state = ghPR.state.toLowerCase();
         }
       }
     }
@@ -83,12 +87,12 @@ export const triage = defineCommand({
         category = "merged";
       } else if (r.pr && r.pr.state === "open") {
         category = "ready";
-      } else if (r.diff && r.diff.files > 0 && !r.pr) {
-        category = "needs_pr";
-      } else if (r.status === "needs_review" && (!r.diff || r.diff.files === 0)) {
-        category = "stuck";
       } else if (r.status === "needs_review" && r.pr) {
         category = "ready";
+      } else if (r.status === "needs_review" && !r.pr) {
+        category = (!brief && (!r.diff || r.diff.files === 0)) ? "stuck" : "needs_pr";
+      } else if (r.diff && r.diff.files > 0 && !r.pr) {
+        category = "needs_pr";
       } else {
         category = "stuck";
       }
@@ -212,23 +216,46 @@ export const triage = defineCommand({
   },
 });
 
-async function enrichTasks(api: typeof import("../api.js"), tasks: any[], cfg: any) {
-  // Fetch full details and diffs in parallel batches
-  const enriched = await Promise.all(tasks.map(async (task) => {
+function pLimit(concurrency: number) {
+  let active = 0;
+  const queue: (() => void)[] = [];
+  return <T>(fn: () => Promise<T>): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      const run = () => { active++; fn().then(resolve, reject).finally(() => { active--; queue.length && queue.shift()!(); }); };
+      active < concurrency ? run() : queue.push(run);
+    });
+}
+
+async function enrichTasks(api: typeof import("../api.js"), tasks: any[], cfg: any, brief = false) {
+  if (brief) {
+    // Brief mode: listTasks already returns status + pullRequest, no extra fetches needed
+    return tasks.map(task => ({
+      identifier: task.identifier || task.id,
+      title: task.title || "",
+      status: task.status,
+      labels: task.labels || [],
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      pr: task.pullRequest?.number ? {
+        number: task.pullRequest.number,
+        state: task.pullRequest.state || "?",
+        url: task.pullRequest.url,
+      } : null,
+      diff: null,
+      jam: null,
+      _raw: task,
+    }));
+  }
+
+  const limit = pLimit(5);
+  const enriched = await Promise.all(tasks.map(task => limit(async () => {
     const id = task.identifier || task.id;
-    let detail: any = task;
-    let diff: any = null;
 
-    try {
-      // Only fetch detail if list response (no jams field)
-      if (!task.jams) {
-        detail = await api.getTask(id);
-      }
-    } catch {}
-
-    try {
-      diff = await api.getDiff(id);
-    } catch {}
+    // Fetch detail + diff in parallel
+    const [detail, diff] = await Promise.all([
+      task.jams ? task : api.getTask(id).catch(() => task),
+      api.getDiff(id).catch(() => null),
+    ]);
 
     const lastJam = (detail.jams || []).at(-1);
     const credits = lastJam?.credits;
@@ -260,7 +287,7 @@ async function enrichTasks(api: typeof import("../api.js"), tasks: any[], cfg: a
       } : null,
       _raw: detail,
     };
-  }));
+  })));
 
   return enriched;
 }

@@ -50,17 +50,22 @@ Verify: `capy status --json` should return `{ "threads": [...], "tasks": [...] }
 
 If it returns `{ "error": ... }`, the API key or project ID is wrong. Ask the user.
 
-## Step 4: Install skill
+## Step 4: Load the operating manual
+
+`skills/capy/SKILL.md` is the full operating manual: object model, decision trees, workflows, guardrails, commands. You need it in your context.
 
 ```bash
 npx skills add yazcaleb/capy-cli
 ```
 
-This adds the `capy` skill to your skills directory so you have the full command reference available in context.
+If skills.sh doesn't work in your setup, copy the file to your persistent skills or memory folder, or read it at session start:
+```bash
+cp skills/capy/SKILL.md <your-agent-skills-dir>/capy.md
+```
 
-## Step 5: MCP server (if you support MCP)
+## Step 5: MCP server (optional)
 
-Add this to your MCP configuration:
+If your agent supports MCP, add the server for structured tool calls instead of CLI. Both have full API parity.
 
 ```json
 {
@@ -81,7 +86,7 @@ Config file locations:
 - Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 - Cursor: `.cursor/mcp.json`
 
-21 MCP tools with full API parity:
+25 MCP tools with full API parity:
 
 | Tool | What it does | Annotations |
 |------|-------------|-------------|
@@ -104,12 +109,14 @@ Config file locations:
 | `capy_models` | List models | readOnly, idempotent |
 | `capy_pool_status` | Warm pool config + VM status | readOnly, idempotent |
 | `capy_pool_update` | Update warm pool config | openWorld |
+| `capy_pool_test` | Test VM boot with setup commands | openWorld |
 | `capy_pool_instances` | List warm pool VMs | readOnly, idempotent |
 | `capy_pool_clear` | Clear/refresh warm pool | destructive |
+| `capy_projects` | List all projects | readOnly, idempotent |
+| `capy_project` | Get project details (repos, code, config) | readOnly, idempotent |
+| `capy_triage` | Actionable triage with categories + recs (brief mode available) | readOnly |
 
-Tools with predictable outputs (`capy_captain`, `capy_build`, `capy_review`, `capy_approve`, `capy_retry`) declare `outputSchema` for typed structured content per the 2025-03-26 MCP spec.
-
-If you don't support MCP, skip this step. The CLI works everywhere.
+If you don't use MCP, skip this step. The CLI from Step 2 works everywhere with `--json`.
 
 ## Step 6: Verify everything
 
@@ -123,128 +130,6 @@ capy models --json
 
 You are now fully configured.
 
----
+## Usage
 
-## How to use capyai
-
-### Delegate work
-
-```bash
-capy captain "Implement feature X. Files: src/foo.ts. Tests required." --json
-```
-
-Returns `{ "threadId": "...", "url": "..." }`. Save the `threadId`.
-
-### Wait for completion
-
-```bash
-capy wait <threadId> --timeout=600 --json
-```
-
-Blocks until the thread reaches a terminal state. Returns the full thread object with `tasks` array. Each task has an `identifier` (like `SCO-1`).
-
-### Review quality
-
-```bash
-capy review <taskId> --json
-```
-
-Returns `{ "task": "SCO-1", "quality": { "pass": true, "passed": 5, "total": 5, "gates": [...] } }`.
-
-Read `quality.pass`. If `true`, approve. If `false`, read `quality.gates` for what failed.
-
-### Approve or retry
-
-```bash
-# If quality.pass is true:
-capy approve <taskId> --json
-
-# If quality.pass is false:
-capy retry <taskId> --fix="describe what to fix" --json
-```
-
-`retry` returns `{ "newThread": "..." }`. Wait on that new thread ID, then review again.
-
-### The full loop
-
-```bash
-THREAD=$(capy captain "your prompt" --json | jq -r '.threadId')
-capy wait "$THREAD" --timeout=600 --json
-
-TASK=$(capy threads get "$THREAD" --json | jq -r '.tasks[0].identifier')
-QUALITY=$(capy review "$TASK" --json)
-PASS=$(echo "$QUALITY" | jq -r '.quality.pass')
-
-while [ "$PASS" != "true" ]; do
-  GATES=$(echo "$QUALITY" | jq -r '.quality.gates[] | select(.pass == false) | .name + ": " + .detail')
-  NEW=$(capy retry "$TASK" --fix="Fix these failures: $GATES" --json | jq -r '.newThread')
-  capy wait "$NEW" --timeout=600 --json
-  TASK=$(capy threads get "$NEW" --json | jq -r '.tasks[0].identifier')
-  QUALITY=$(capy review "$TASK" --json)
-  PASS=$(echo "$QUALITY" | jq -r '.quality.pass')
-done
-
-capy approve "$TASK" --json
-```
-
-### Background monitoring
-
-For async fire-and-forget work. Sets a cron job that polls and runs your notification command when done.
-
-```bash
-capy watch <threadId>
-capy config notifyCommand "<your notification command> {text}"
-```
-
-`{text}` is replaced with a summary when the task completes. Examples:
-- `openclaw system event --text {text} --mode now`
-- `echo {text} >> ~/capy-notifications.log`
-
-List watches: `capy watches --json`. Remove: `capy unwatch <id>`.
-
-### All commands
-
-Every command supports `--json` for structured output. Errors always return `{ "error": { "code": "...", "message": "..." } }`.
-
-| Command | What it does |
-|---------|-------------|
-| `capy captain "<prompt>"` | Start Captain thread |
-| `capy build "<prompt>"` | Start Build agent (small isolated tasks) |
-| `capy start <id>` | Start/resume a backlog task |
-| `capy stop <id> [reason]` | Stop a running task |
-| `capy msg <id> "<text>"` | Message a running task |
-| `capy wait <id> --timeout=N` | Block until terminal state |
-| `capy review <id>` | Run quality gates (pass/fail) |
-| `capy re-review <id>` | Trigger fresh Greptile review |
-| `capy approve <id>` | Approve if gates pass |
-| `capy retry <id> --fix="..."` | Retry with context from failure |
-| `capy status` | Dashboard (all threads + tasks) |
-| `capy list [status]` | List tasks (filter: in_progress, needs_review, backlog, archived) |
-| `capy get <id>` | Task details (jams, PR state, credits) |
-| `capy diff <id>` | View diff (file-by-file with patches) |
-| `capy pr <id> [title]` | Create PR for a task |
-| `capy watch <id>` | Cron poll + notify on completion |
-| `capy unwatch <id>` | Stop watching |
-| `capy watches` | List active watches |
-| `capy threads list` | List Captain threads |
-| `capy threads get <id>` | Thread details (tasks, PRs) |
-| `capy threads msg <id> "<text>"` | Message a thread |
-| `capy threads stop <id>` | Stop a thread |
-| `capy threads messages <id>` | Read thread conversation history |
-| `capy pool` | Warm pool status |
-| `capy pool set --size=N --age=M` | Update warm pool config |
-| `capy pool test` | Test VM boot |
-| `capy pool instances [status]` | List pool VMs |
-| `capy pool instance <id>` | VM detail + logs |
-| `capy pool clear [--replenish]` | Clear/refresh pool |
-| `capy config [key] [value]` | Get/set config |
-| `capy models` | List available models |
-| `capy tools` | Show all commands + env vars |
-
-### Prompting tips
-
-Bad: `"Fix the CI issue"`
-
-Good: `"Fix CI for crypto-trading pack. The changeset file is missing. Add a changeset entry for @veto/crypto-trading. Run changeset validation. Reference: PLW-201."`
-
-Always include: specific files, specific functions, acceptance criteria, references to related tasks/issues.
+Read `skills/capy/SKILL.md`. That's it. Everything you need to orchestrate Capy agents is in that file.

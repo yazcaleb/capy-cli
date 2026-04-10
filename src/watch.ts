@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execSync, execFileSync } from "node:child_process";
 import * as config from "./config.js";
+import { shellEscape } from "./commands/_shared.js";
 import type { WatchEntry } from "./types.js";
 
 function getCrontab(): string {
@@ -51,11 +52,11 @@ export function list(): WatchEntry[] {
 
 export function notify(text: string): boolean {
   const cfg = config.load();
-  const cmd = cfg.notifyCommand || "openclaw system event --text {text} --mode now";
+  const cmd = cfg.notifyCommand;
+  if (!cmd) return false;
   try {
-    const parts = cmd.replace("{text}", text).split(/\s+/);
-    execFileSync(parts[0], parts.slice(1), {
-      encoding: "utf8", timeout: 15000, stdio: "pipe",
+    execSync(cmd.replace("{text}", shellEscape(text)), {
+      timeout: 15000, stdio: "pipe",
     });
     return true;
   } catch { return false; }

@@ -14,36 +14,62 @@ function fail(code: string, message: string): never {
   throw new CapyError(code, message);
 }
 
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const SAFE_METHODS = new Set(["GET", "HEAD"]);
+const MAX_RETRIES = 3;
+
 async function rawRequest(apiKey: string, server: string, method: string, path: string, body?: unknown): Promise<any> {
   const url = `${server}${path}`;
   const headers: Record<string, string> = {
     "Authorization": `Bearer ${apiKey}`,
     "Accept": "application/json",
   };
-  const init: RequestInit = { method, headers };
   if (body) {
     headers["Content-Type"] = "application/json";
-    init.body = JSON.stringify(body);
   }
 
-  let res: Response;
-  try {
-    res = await fetch(url, init);
-  } catch (e: unknown) {
-    fail("network_error", `request failed — ${(e as Error).message}`);
+  const isSafe = SAFE_METHODS.has(method.toUpperCase());
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      const base = Math.min(1000 * 2 ** (attempt - 1), 8000);
+      const jitter = Math.random() * base * 0.5;
+      await new Promise(r => setTimeout(r, base + jitter));
+    }
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method,
+        headers,
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+    } catch (e: unknown) {
+      lastError = e as Error;
+      if (isSafe && attempt < MAX_RETRIES) continue;
+      fail("network_error", `request failed after ${attempt + 1} attempts — ${lastError.message}`);
+    }
+
+    const canRetryStatus = res.status === 429 || (isSafe && RETRYABLE_STATUS.has(res.status));
+    if (canRetryStatus && attempt < MAX_RETRIES) {
+      continue;
+    }
+
+    const text = await res.text();
+    let data: any;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      fail("bad_response", `bad API response: ${text.slice(0, 200)}`);
+    }
+    if (data.error) {
+      fail(data.error.code || "api_error", data.error.message || "unknown API error");
+    }
+    return data;
   }
 
-  const text = await res.text();
-  let data: any;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    fail("bad_response", `bad API response: ${text.slice(0, 200)}`);
-  }
-  if (data.error) {
-    fail(data.error.code || "api_error", data.error.message || "unknown API error");
-  }
-  return data;
+  fail("network_error", `request failed after ${MAX_RETRIES + 1} attempts — ${lastError?.message || "unknown"}`);
 }
 
 async function request(method: string, path: string, body?: unknown): Promise<any> {
@@ -71,6 +97,11 @@ export async function listProjects(apiKey: string, server = "https://capy.ai/api
 export async function listModelsWithKey(apiKey: string, server = "https://capy.ai/api/v1"): Promise<Model[]> {
   const data = await rawRequest(apiKey, server, "GET", "/models");
   return data.models || [];
+}
+
+export async function listProjectsAuth(): Promise<Project[]> {
+  const data = await request("GET", "/projects");
+  return data.items || [];
 }
 
 export async function getProject(id?: string): Promise<Project & { createdAt?: string; updatedAt?: string }> {
