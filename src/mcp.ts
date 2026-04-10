@@ -27,7 +27,17 @@ server.tool("capy_status", "Get task or thread status, or full dashboard", {
 }, async ({ id }) => {
   if (id) {
     const isThread = id.length > 20 || (id.length > 10 && !id.match(/^[A-Z]+-\d+$/));
-    const data = isThread ? await api.getThread(id) : await api.getTask(id);
+    const data: any = isThread ? await api.getThread(id) : await api.getTask(id);
+    // Capy API reports merged PRs as "closed". Cross-ref with GitHub for real state.
+    if (!isThread && data.pullRequest?.number && data.pullRequest.state === "closed") {
+      const { getPR } = await import("./github.js");
+      const cfg = config.load();
+      const repo = data.pullRequest.repoFullName || cfg.repos[0]?.repoFullName;
+      if (repo) {
+        const ghPR = getPR(repo, data.pullRequest.number);
+        if (ghPR) data.pullRequest.state = ghPR.state.toLowerCase();
+      }
+    }
     return { content: [{ type: "text", text: JSON.stringify(data) }] };
   }
   const [threads, tasks] = await Promise.all([api.listThreads({ limit: 10 }), api.listTasks({ limit: 30 })]);

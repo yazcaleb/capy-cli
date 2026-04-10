@@ -31,10 +31,22 @@ export const get = defineCommand({
   },
   async run({ args }) {
     const api = await import("../api.js");
+    const config = await import("../config.js");
+    const github = await import("../github.js");
     const fmt = await import("../output.js");
     const { log } = await import("@clack/prompts");
 
     const data = await api.getTask(args.id);
+
+    // Capy API reports merged PRs as "closed". Cross-ref with GitHub for real state.
+    if (data.pullRequest?.number && data.pullRequest.state === "closed") {
+      const repo = data.pullRequest.repoFullName || config.load().repos[0]?.repoFullName;
+      if (repo) {
+        const ghPR = github.getPR(repo, data.pullRequest.number);
+        if (ghPR) data.pullRequest.state = ghPR.state.toLowerCase();
+      }
+    }
+
     if (args.json) { fmt.out(data); return; }
     log.info(`Task:    ${data.identifier} \u2014 ${data.title}\nStatus:  ${data.status}\nCreated: ${data.createdAt}`);
     if (data.pullRequest) {
