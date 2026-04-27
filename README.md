@@ -1,6 +1,6 @@
 # capyai
 
-Agent orchestrator with quality gates for [Capy.ai](https://capy.ai). Lets any AI agent delegate coding work to Capy agents, wait for completion, enforce quality, and approve or retry.
+Unofficial agent orchestrator with quality gates for [Capy.ai](https://capy.ai). Lets any AI agent delegate coding work to Capy agents, wait for completion, enforce quality, and approve or retry.
 
 Works with Claude Code, Codex, OpenClaw, Poke, or any agent that runs shell commands.
 
